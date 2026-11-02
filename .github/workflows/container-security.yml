@@ -24,13 +24,13 @@ jobs:
           context: ./backend/python/fraud
           load: true
           tags: aegispay-fraud:ci
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: aegispay-api:ci
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           exit-code: '1'
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: aegispay-fraud:ci
           scanners: vuln,secret,misconfig

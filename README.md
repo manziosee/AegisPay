@@ -1,25 +1,80 @@
 # AegisPay
 
-AegisPay is a sandbox-first, multi-tenant payment infrastructure platform. It gives businesses a consistent API for internal accounts and ledger operations, simulated collections/refunds, fraud assessment, reconciliation imports, and webhook events.
+[![Container build and scan](https://github.com/manziosee/AegisPay/actions/workflows/container-security.yml/badge.svg)](https://github.com/manziosee/AegisPay/actions/workflows/container-security.yml)
+![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7-FF4438?logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-Kustomize-326CE5?logo=kubernetes&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus&logoColor=white)
+![OpenAPI](https://img.shields.io/badge/OpenAPI-3.0.3-6BA539?logo=swagger&logoColor=white)
+![SQL](https://img.shields.io/badge/SQL-PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![YAML](https://img.shields.io/badge/YAML-configuration-CB171E?logo=yaml&logoColor=white)
+![Shell](https://img.shields.io/badge/Shell-POSIX-4EAA25?logo=gnubash&logoColor=white)
 
-AegisPay’s internal ledger records activity inside the platform. It does not represent funds held in a bank and does not move money over a real payment network. This repository has no live payment connectors and must not be used to hold or process real funds.
+AegisPay is a sandbox-first, multi-tenant payment infrastructure project. It provides APIs for organization identity, internal accounts and ledger entries, simulated collections and refunds, fraud review, reconciliation imports, and signed webhooks.
 
-## Current implementation
+> **Sandbox only.** The ledger records internal platform activity; it does not represent bank-held funds or move money over a real payment network. This repository has no live payment connectors and must not be used to process real funds or cardholder data.
 
-- Go REST API with PostgreSQL-backed users, sessions, organizations, memberships, role checks, tenant API keys, customers, accounts, collections, refunds, transfers, and ledger entries.
-- Passwords are bcrypt hashed. Sessions are opaque, hashed in the database, expire after 12 hours, and can be revoked. API key secrets are SHA-256 hashed and shown only once.
-- Composite database constraints enforce tenant ownership across customers, accounts, collections, transfers, and journal lines.
-- Financial collection confirmation, refunds, internal transfers, and sandbox credits post balanced journal lines in transactions. Sensitive writes require `Idempotency-Key`; a matching retry replays the original response atomically.
-- Transfers above `TRANSFER_APPROVAL_THRESHOLD_MINOR` (default 100,000,000) wait for a distinct authenticated user to approve or reject them.
-- Sandbox collections can be confirmed only through an explicit simulation endpoint. They do not prove a provider payment was received.
-- Python FastAPI risk scoring is called by the Go API. Assessments and review cases are saved; analysts can resolve cases with an audited note.
-- JSON reconciliation imports match succeeded sandbox collections by exact reference, amount, and currency. Lines without an exact eligible match are marked unmatched or exception for review; this is not settlement matching against a payment provider.
-- Outbox events are dispatched to registered HTTPS webhooks. Signing secrets are encrypted at rest with `WEBHOOK_ENCRYPTION_KEY`; signatures include a timestamp and HMAC-SHA256. Delivery uses at-least-once retries and blocks private or local destinations to reduce SSRF risk.
+## Contents
+
+- [Architecture](#architecture)
+- [Technology and languages](#technology-and-languages)
+- [Features](#features)
+- [Run locally](#run-locally)
+- [API quick start](#api-quick-start)
+- [Services and ports](#services-and-ports)
+- [Kubernetes development deployment](#kubernetes-development-deployment)
+- [Operations](#operations)
+- [Security boundary and production work](#security-boundary-and-production-work)
+- [Repository layout](#repository-layout)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Client[API client] -->|Bearer auth and JSON| API[Go REST API]
+    Swagger[Swagger UI] -->|OpenAPI contract| Client
+    API --> PG[(PostgreSQL)]
+    API --> Redis[(Redis rate limits)]
+    API --> Fraud[Python FastAPI fraud scorer]
+    API --> Outbox[Outbox and webhook worker]
+    Outbox -->|HTTPS with timestamped HMAC| Endpoint[Customer webhook endpoint]
+    Prom[Prometheus] -->|scrape /metrics| API
+```
+
+Docker Compose is the recommended local setup. PostgreSQL, Redis, and Fraud stay on the internal Compose network. The API and local UI/metrics services have the network access needed for their documented functions. The Go API applies versioned database migrations at startup in this development setup.
+
+The Kubernetes Kustomize base deploys the same services with single replicas and in-cluster PostgreSQL/Redis. It is a development starting point, not a production cluster design.
+
+## Technology and languages
+
+| Area | Technology |
+| --- | --- |
+| Main API and background outbox worker | Go 1.23, `net/http`, `pgx`, Redis client |
+| Fraud scoring service | Python 3.12, FastAPI, Pydantic |
+| Data and rate limiting | PostgreSQL 16, Redis 7 |
+| API contract and explorer | OpenAPI 3.0.3, Swagger UI |
+| Local infrastructure | Docker, Docker Compose |
+| Cluster manifests | Kubernetes, Kustomize |
+| Monitoring and security automation | Prometheus, GitHub Actions, Trivy |
+| Other source/configuration languages | SQL migrations, YAML manifests/workflows, POSIX shell scripts |
+
+## Features
+
+- Organization registration, sessions, organization membership and role management.
+- Bcrypt password hashes; opaque, hashed session tokens; SHA-256 hashed API keys shown once; scoped sandbox API keys.
+- Tenant-aware PostgreSQL constraints for financial records.
+- Double-entry ledger postings for sandbox credits, internal transfers, simulated collection confirmation, and simulated refunds.
+- Idempotency keys on financial writes, with response replay for matching retries and conflict detection when a key is reused for another request.
+- Separate-user approval for transfers at or above `TRANSFER_APPROVAL_THRESHOLD_MINOR` (default `100000000`).
+- Fraud assessments through the FastAPI service, review cases, analyst notes, audit records, and case events.
+- JSON reconciliation imports. Current matching is limited to succeeded sandbox collections with the same reference, amount, and currency; unmatched or inconsistent statement lines require review.
+- Outbox event dispatch to HTTPS webhook endpoints. Signing secrets are encrypted with `WEBHOOK_ENCRYPTION_KEY`; deliveries use timestamped HMAC-SHA256 signatures, bounded retries, and private-address blocking.
 - Cursor pagination for customer, account, collection, and transfer lists.
-- Redis-backed per-IP rate limits for registration, login, and API calls; Prometheus request counters at `/metrics`.
-- Docker Compose, OpenAPI/Swagger UI, Kustomize development manifests, PostgreSQL backup/restore-to-new-database scripts, and a container vulnerability/secret/misconfiguration scan workflow.
-
-The local bootstrap key in `.env` remains a privileged sandbox operator credential. Normal users can register an organization, log in, add already-registered users to their organization, change or suspend memberships, create additional organizations as an owner/admin, and create scoped sandbox API keys. The last active owner cannot be demoted or suspended. Email invitations, MFA, password recovery, login lockout across replicas, tenant PostgreSQL RLS, API-key expiration/rotation workflows, and a production identity provider are not implemented.
+- Redis-backed per-IP rate limits and Prometheus request counters at `/metrics`.
 
 ## Run locally
 
@@ -31,52 +86,73 @@ docker compose up --build -d
 docker compose ps
 ```
 
-If `.env` already exists from an earlier version, add a fresh `WEBHOOK_ENCRYPTION_KEY` before registering webhook endpoints:
+The secret generator creates a new `.env` file with restrictive permissions and refuses to overwrite an existing file. If an older `.env` has no webhook encryption key, generate one and append it before creating webhook endpoints:
 
 ```sh
 printf 'WEBHOOK_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" >> .env
 chmod 600 .env
 ```
 
-The generator refuses to overwrite `.env` and writes new files with mode `600`. Never commit or reuse development secrets in hosted environments.
+Do not commit `.env` or reuse development secrets in a hosted environment. `.env.example` contains placeholders only.
 
-- API: `http://localhost:18080` (set `API_PORT=8080` to use the conventional port when it is available)
-- Swagger UI: `http://localhost:8081`
-- Prometheus: `http://localhost:9090`
-- PostgreSQL and Redis stay private on the internal Compose network; use `docker compose exec postgres psql` and `docker compose exec redis redis-cli` for administration.
-- Fraud service: private to the Compose network at `fraud:8090`
-
-Use `Authorization: Bearer <AEGIS_API_KEY from .env>` for local operator calls. Or register a user with `POST /v1/auth/register` and use the returned bearer session. User sessions can choose an organization using `X-Organization-ID`; the API checks membership for that organization.
-
-Example API flow:
+To stop the services while retaining local database data:
 
 ```sh
+docker compose down
+```
+
+To delete the local PostgreSQL and Redis volumes as well:
+
+```sh
+docker compose down -v
+```
+
+## API quick start
+
+The default local API base URL is `http://localhost:18080`. Set `API_PORT=8080` when launching Compose to use port 8080 instead. Interactive API documentation is at `http://localhost:8081`.
+
+Check readiness and list the bootstrap sandbox organization:
+
+```sh
+API=http://localhost:18080
 API_KEY=$(sed -n 's/^AEGIS_API_KEY=//p' .env)
-curl -s http://localhost:8080/health/ready
-curl -s -H "Authorization: Bearer $API_KEY" http://localhost:8080/v1/organizations
-curl -s -X POST http://localhost:8080/v1/customers \
-  -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
-  -d '{"name":"Demo customer","email":"demo@example.test"}'
-curl -s -X POST http://localhost:8080/v1/accounts \
-  -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+curl -fsS "$API/health/ready"
+curl -fsS -H "Authorization: Bearer $API_KEY" "$API/v1/organizations"
+```
+
+Register a user and organization with `POST /v1/auth/register`, then use the returned `access_token` as a bearer token. Sessions can select one of the user’s organizations with `X-Organization-ID`; membership is checked for the selected organization.
+
+Create a sandbox account with the bootstrap key:
+
+```sh
+curl -fsS -X POST "$API/v1/accounts" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
   -d '{"currency":"RWF"}'
 ```
 
-Use the returned account ID with `POST /v1/accounts/{id}/sandbox-credit`, including both an `Idempotency-Key` header and a positive amount. All amounts are integer units in the currency’s configured smallest unit. A sandbox credit is simulated and does not represent money received.
+For sandbox credits, collections, transfers, refunds, transfer approvals, and reconciliation imports, send a unique `Idempotency-Key` header. Amounts are positive integers in the currency’s smallest configured unit. Sandbox credits and confirmations simulate ledger entries; they do not indicate that an external payment occurred.
 
-Stop containers and retain local data with `docker compose down`. `docker compose down -v` deletes the local database and Redis volumes.
+Full request and response definitions are in [`docs/api/openapi.yaml`](docs/api/openapi.yaml). Swagger UI is served locally on port 8081.
 
-## API and operations
+## Services and ports
 
-The full API contract is [docs/api/openapi.yaml](docs/api/openapi.yaml). Swagger UI runs on port 8081 and Prometheus on port 9090, both bound to localhost. Lists use `limit` (1–100, default 25) and an opaque `cursor`. API errors include request IDs. The bootstrap key has all sandbox permissions; user roles and API key scopes restrict normal credentials.
+| Service | Local address | Purpose |
+| --- | --- | --- |
+| Go API | `http://localhost:18080` | REST API and `/health/*`, `/metrics` |
+| Swagger UI | `http://localhost:8081` | Interactive OpenAPI explorer |
+| Prometheus | `http://localhost:9090` | Local metrics dashboard |
+| PostgreSQL | Compose network only | Persistent application database |
+| Redis | Compose network only | Rate-limit store |
+| Fraud service | Compose network only at `fraud:8090` | Internal risk scoring API |
 
-To test internal money flows, create two same-currency accounts, sandbox-credit the first, and create a transfer with an idempotency key. A collection stays pending until `POST /v1/collections/{id}/sandbox-confirm` specifies the receiving account. A sandbox refund debits that account. No external provider is called for these operations.
-
-Create a compressed local PostgreSQL archive with `scripts/backup-postgres.sh`. Restore it into a separate database using `scripts/restore-postgres-to-new-db.sh`; the restore script leaves the active database untouched. These local archives are not encrypted. Production backup encryption, retention, and restore drills must be configured in the selected hosting environment.
+Use `docker compose exec postgres psql` or `docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD"'` for local data-service administration. PostgreSQL and Redis are not published on host ports.
 
 ## Kubernetes development deployment
 
-`infrastructure/kubernetes/base` is a development Kustomize base, not a production topology. It deploys API, fraud service, Swagger UI, PostgreSQL, Redis, and Prometheus. It expects a default StorageClass and a Secret named `aegispay-secrets`.
+`infrastructure/kubernetes/base` is a Kustomize development base. It includes API, Fraud, Swagger UI, PostgreSQL, Redis, Prometheus, NetworkPolicy examples, and development secrets wiring. It expects a default StorageClass and a Secret named `aegispay-secrets`.
+
+Create the namespace and secret, build/load the images, then apply the manifests:
 
 ```sh
 kubectl create namespace aegispay
@@ -86,14 +162,49 @@ kubectl -n aegispay create secret generic aegispay-secrets \
   --from-literal=REDIS_PASSWORD="$(openssl rand -hex 32)" \
   --from-literal=AEGIS_API_KEY="aegis_test_$(openssl rand -hex 32)" \
   --from-literal=WEBHOOK_ENCRYPTION_KEY="$(openssl rand -hex 32)"
-# Build images and load them into kind/minikube before applying manifests.
+docker build -t aegispay-api:local ./backend/go
+docker build -t aegispay-fraud:local ./backend/python/fraud
+kind load docker-image aegispay-api:local aegispay-fraud:local
 kubectl apply -k infrastructure/kubernetes/base
 ```
 
-Load local images with `kind load docker-image aegispay-api:local aegispay-fraud:local`, or use `minikube image load` for each image. Then use `kubectl port-forward svc/api 18080:8080`, `svc/swagger 8081:8080`, or `svc/prometheus 9090:9090` as needed.
+For Minikube, load the images with `minikube image load aegispay-api:local` and `minikube image load aegispay-fraud:local`. Forward services to your workstation:
 
-Kubernetes Secret values are base64 encoded, not encrypted by default. Configure cluster secret encryption and RBAC or an external secrets manager before use. NetworkPolicies apply only when the cluster CNI enforces them. Update image registries, storage, TLS, resource limits, availability settings, secrets, monitoring, backups, and deployment controls for a hosted environment.
+```sh
+kubectl -n aegispay port-forward svc/api 18080:8080
+kubectl -n aegispay port-forward svc/swagger 8081:8080
+kubectl -n aegispay port-forward svc/prometheus 9090:9090
+```
 
-## Remaining before production
+Kubernetes Secret values are base64 encoded, not encrypted by default. Enable cluster secret encryption and suitable RBAC or an external secrets manager before using a hosted cluster. NetworkPolicies work only when the cluster CNI enforces them.
 
-Real bank/mobile-money collection and payout integrations require authorized partners, credentials, settlement/reversal handling, and jurisdiction-specific approvals. Production also needs OIDC/MFA, user invitation and recovery flows, tenant RLS, access reviews, a separate migration job/role, TLS/private managed PostgreSQL and Redis, managed secrets, encrypted backups and restore drills, alerting, incident response, and environment-isolated CI/CD. Do not store raw card data.
+## Operations
+
+- Back up the local database with [`scripts/backup-postgres.sh`](scripts/backup-postgres.sh).
+- Restore an archive into a separate database with [`scripts/restore-postgres-to-new-db.sh`](scripts/restore-postgres-to-new-db.sh); the script leaves the active database unchanged.
+- Local backups are compressed but not encrypted. Configure production encryption, retention, access controls, and recurring restore drills in the hosting environment.
+- GitHub Actions builds the Go and Fraud images and scans them with Trivy for high and critical vulnerabilities, secrets, and misconfiguration.
+
+## Security boundary and production work
+
+The bootstrap key in `.env` is a privileged local sandbox operator credential. Normal user roles and API-key scopes restrict access. Webhooks require HTTPS and reject DNS resolutions to private, local, link-local, or other non-public addresses. These controls are useful for local development; they do not by themselves constitute a production security program.
+
+A production payment platform still needs authorized bank/mobile-money partners, provider callbacks and settlement/reversal handling, and jurisdiction-specific approvals. The repository does not have live collection or payout integrations. Production deployment also needs a managed identity provider with MFA and recovery, invitation flows, tenant row-level security, access reviews, a separate migration job and database role, TLS and private managed data services, managed secrets, encrypted backups and restore drills, monitoring and alerts, incident response, and environment-isolated CI/CD. Do not store raw card data.
+
+## Repository layout
+
+```text
+backend/
+  go/                         Go REST API, migrations, Docker image
+  python/fraud/               FastAPI risk scorer and Docker image
+docs/
+  api/openapi.yaml             OpenAPI contract
+  INFRASTRUCTURE.md            Deployment and operations notes
+infrastructure/
+  kubernetes/base/             Kustomize development manifests
+  monitoring/prometheus/       Prometheus scrape configuration
+  postgres/init/               Least-privilege local database bootstrap
+scripts/                       Secret generation and backup/restore helpers
+.github/workflows/             Container build and security scan workflow
+compose.yaml                   Local multi-service development stack
+```
