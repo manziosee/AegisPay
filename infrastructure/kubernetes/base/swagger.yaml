@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: swagger
+spec:
+  selector: {app: swagger}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swagger
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: swagger}}
+  template:
+    metadata: {labels: {app: swagger}}
+    spec:
+      containers:
+        - name: swagger
+          image: swaggerapi/swagger-ui:v5.18.2
+          ports: [{containerPort: 8080}]
+          env: [{name: SWAGGER_JSON, value: /spec/openapi.yaml}]
+          volumeMounts: [{name: spec, mountPath: /spec, readOnly: true}]
+      volumes: [{name: spec, configMap: {name: aegispay-openapi}}]

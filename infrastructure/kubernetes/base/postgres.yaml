@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{containerPort: 5432}]
+          env:
+            - {name: POSTGRES_DB, value: aegispay}
+            - {name: POSTGRES_USER, value: aegispay_admin}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: aegispay-secrets, key: POSTGRES_PASSWORD}}}
+            - {name: APP_DB_USER, value: aegispay_app}
+            - {name: APP_DB_PASSWORD, valueFrom: {secretKeyRef: {name: aegispay-secrets, key: APP_DB_PASSWORD}}}
+            - {name: POSTGRES_INITDB_ARGS, value: "--auth-host=scram-sha-256"}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d/001-security.sh, subPath: 001-security.sh, readOnly: true}
+          readinessProbe:
+            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: init
+          configMap: {name: postgres-init, defaultMode: 0555}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 5Gi}}

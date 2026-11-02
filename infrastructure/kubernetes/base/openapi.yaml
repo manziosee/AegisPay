@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: AegisPay API
+  version: 0.1.0
+  description: |-
+    Sandbox-first multi-tenant payment infrastructure API. Monetary amounts use
+    the smallest currency unit. Internal balances are ledger records and are not
+    deposits or a claim on funds held in a bank. External payment execution is disabled.
+servers:
+  - url: http://localhost:{apiPort}
+    description: Local sandbox
+    variables:
+      apiPort:
+        default: '18080'
+        enum: ['18080', '8080']
+security:
+  - bearerAuth: []
+paths:
+  /health/live:
+    get:
+      security: []
+      summary: Liveness
+      responses:
+        '200': {description: Process is alive}
+  /health/ready:
+    get:
+      security: []
+      summary: Readiness
+      responses:
+        '200': {description: Database is reachable}
+        '503': {description: Dependency unavailable}
+  /v1/auth/register:
+    post:
+      security: []
+      summary: Register a user and a new organization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization_name, full_name, email, password]
+              properties:
+                organization_name: {type: string}
+                full_name: {type: string}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 12, maxLength: 72}
+                country_code: {type: string, minLength: 2, maxLength: 2}
+      responses: {'201': {description: Created owner and bearer session}, '409': {description: Email already exists}}
+  /v1/auth/login:
+    post:
+      security: []
+      summary: Create a user session
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [email, password], properties: {email: {type: string, format: email}, password: {type: string}, organization_id: {type: string}}}}}
+      responses: {'200': {description: Bearer session}, '401': {description: Invalid credentials}}
+  /v1/auth/me:
+    get:
+      summary: Inspect current organization and role
+      responses: {'200': {description: Authenticated principal}}
+  /v1/auth/logout:
+    post:
+      summary: Revoke current user session
+      responses: {'200': {description: Session revoked}}
+  /v1/members:
+    get:
+      summary: List organization members
+      responses: {'200': {description: Members}}
+    post:
+      summary: Add an already-registered user to organization
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [email, role], properties: {email: {type: string, format: email}, role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}}}}}
+      responses: {'201': {description: Member added}, '404': {description: User must register first}}
+  /v1/members/{id}:
+    patch:
+      summary: Change a member role or active status
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, properties: {role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}, status: {type: string, enum: [active, suspended]}}}}}
+      responses: {'200': {description: Membership updated}, '409': {description: Last active owner cannot be demoted or suspended}}
+    delete:
+      summary: Suspend a member
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Membership suspended}, '409': {description: Last active owner cannot be removed}}
+  /v1/api-keys:
+    get:
+      summary: List organization API keys (secrets never returned)
+      responses: {'200': {description: API key metadata}}
+    post:
+      summary: Create sandbox API key (secret shown once)
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string}, environment: {type: string, enum: [sandbox]}, scopes: {type: array, items: {type: string}}}}}}
+      responses: {'201': {description: Key created and secret returned once}}
+  /v1/api-keys/{id}/revoke:
+    post:
+      summary: Revoke an API key
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Revoked}}
+  /v1/organizations:
+    get:
+      summary: Get configured organization
+      responses:
+        '200':
+          description: Organization
+          content: {application/json: {schema: {$ref: '#/components/schemas/Organization'}}}
+    post:
+      summary: Create an additional organization for the current user
+      description: Requires an owner or admin user session. The user receives owner membership in the new organization.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string}, slug: {type: string}, country_code: {type: string, minLength: 2, maxLength: 2}}}}}
+      responses:
+        '201': {description: Organization created}
+        '403': {description: Owner or admin session required}
+  /v1/customers:
+    get:
+      summary: List organization customers
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses: {'200': {description: Cursor-paginated data with has_more and next_cursor}}
+    post:
+      summary: Create customer
+      x-codeSamples: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CustomerCreate'}}}
+      responses:
+        '201': {description: Created}
+        '400': {$ref: '#/components/responses/BadRequest'}
+  /v1/customers/{id}:
+    get:
+      summary: Retrieve customer
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Customer}, '404': {description: Not found}}
+  /v1/accounts:
+    get:
+      summary: List organization accounts
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses: {'200': {description: Cursor-paginated data with has_more and next_cursor}}
+    post:
+      summary: Create internal account
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AccountCreate'}}}
+      responses: {'201': {description: Created}, '400': {$ref: '#/components/responses/BadRequest'}}
+  /v1/accounts/{id}:
+    get:
+      summary: Retrieve account
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Account}, '404': {description: Not found}}
+  /v1/accounts/{id}/sandbox-credit:
+    post:
+      summary: Add simulated ledger funds for sandbox testing
+      description: Creates balanced sandbox journal lines. It does not represent receipt or custody of money.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [amount], properties: {amount: {type: integer, minimum: 1}}}
+      responses: {'201': {description: Simulated credit}}
+  /v1/accounts/{id}/balance:
+    get:
+      summary: Get balance derived from posted ledger lines
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Ledger balance}}
+  /v1/collections:
+    get:
+      summary: List organization collections
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses: {'200': {description: Cursor-paginated data with has_more and next_cursor}}
+    post:
+      summary: Create pending collection request (does not move money)
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CollectionCreate'}}}
+      responses: {'201': {description: Pending collection}, '400': {$ref: '#/components/responses/BadRequest'}}
+  /v1/collections/{id}:
+    get:
+      summary: Retrieve collection
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Collection}, '404': {description: Not found}}
+  /v1/collections/{id}/sandbox-confirm:
+    post:
+      summary: Simulate provider confirmation and post a sandbox collection to an account
+      description: This is a test-only flow. It does not confirm an external payment.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [account_id], properties: {account_id: {type: string}}}}}
+      responses: {'200': {description: Ledger-posted sandbox collection}, '409': {description: Collection is no longer pending}}
+  /v1/collections/{id}/refunds:
+    post:
+      summary: Issue a sandbox internal ledger refund
+      description: Refunds debit the account credited by the sandbox collection. They do not move external funds.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [amount, reference], properties: {amount: {type: integer, minimum: 1}, reference: {type: string}}}}}
+      responses: {'201': {description: Refund posted}, '409': {description: Refund exceeds remaining refundable amount}}
+  /v1/collections/{id}/cancel:
+    post:
+      summary: Cancel a pending collection
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Cancelled}, '404': {description: Not found or not cancellable}}
+  /v1/transfers:
+    get:
+      summary: List organization transfers
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses: {'200': {description: Cursor-paginated data with has_more and next_cursor}}
+    post:
+      summary: Post an internal ledger transfer
+      description: Requires sufficient ledger balance; both journal lines and the transfer commit atomically. No external payout occurs.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/TransferCreate'}}}
+      responses: {'201': {description: Posted transfer}, '400': {$ref: '#/components/responses/BadRequest'}, '409': {description: Insufficient funds, duplicate reference, or serialization conflict}}
+  /v1/transfers/{id}/approve:
+    post:
+      summary: Approve a transfer pending review
+      description: Requires a different authenticated user from the initiator and a role with transfer approval permission.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'200': {description: Transfer approved and ledger posted}, '403': {description: Separation of duties denied}}
+  /v1/transfers/{id}/reject:
+    post:
+      summary: Reject a transfer pending review
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'200': {description: Transfer rejected}}
+  /v1/transfers/{id}:
+    get:
+      summary: Retrieve transfer
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Transfer}, '404': {description: Not found}}
+  /v1/ledger/entries:
+    get:
+      summary: List latest ledger entries
+      responses: {'200': {description: Ledger entries}}
+  /v1/fraud/analyze:
+    post:
+      summary: Assess sandbox transaction risk
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RiskAnalyze'}}}
+      responses: {'200': {description: Baseline rule result}}
+  /v1/fraud/cases:
+    get:
+      summary: List fraud cases for the organization
+      responses: {'200': {description: Risk cases with assessment details}}
+  /v1/fraud/cases/{id}/resolve:
+    post:
+      summary: Resolve a fraud case with an analyst decision
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note, outcome], properties: {note: {type: string}, outcome: {type: string, enum: [confirmed, false_positive]}}}}}
+      responses: {'200': {description: Case resolved and audited}}
+  /v1/reconciliation/imports:
+    post:
+      summary: Import and match statement lines in sandbox JSON format
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [lines], properties: {source_name: {type: string}, lines: {type: array, minItems: 1, maxItems: 10000, items: {type: object, required: [external_reference, amount, currency], properties: {external_reference: {type: string}, amount: {type: integer}, currency: {type: string, minLength: 3, maxLength: 3}, transaction_date: {type: string, format: date-time}}}}}}}}
+      responses: {'201': {description: Import created with matched_count, exception_count, and reconciled or needs_review status}}
+  /v1/reconciliation/imports/{id}:
+    get:
+      summary: Retrieve imported statement lines and match results
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Import with lines}, '404': {description: Import not found}}
+  /v1/webhook-endpoints:
+    get:
+      summary: List webhook endpoint metadata
+      responses: {'200': {description: Endpoints without signing secrets}}
+    post:
+      summary: Register an HTTPS webhook endpoint
+      description: URLs resolving to private, loopback, link-local, or otherwise non-public IP addresses are rejected. The signing secret is returned once.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [url, events], properties: {url: {type: string, format: uri}, events: {type: array, items: {type: string}}}}}}
+      responses: {'201': {description: Endpoint created with one-time signing secret}, '400': {description: Invalid or unsafe URL}}
+  /v1/webhook-endpoints/{id}/disable:
+    post:
+      summary: Disable endpoint delivery
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Disabled}}
+  /v1/webhook-deliveries:
+    get:
+      summary: List webhook delivery attempts
+      responses: {'200': {description: Delivery history}}
+  /v1/reports/transactions:
+    get:
+      summary: Transaction report scaffold
+      responses: {'200': {description: Empty sandbox report}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Required for collection creation/confirmation/refund, internal transfers/approvals, and sandbox credits. Replays return the original response when the request body matches.
+      schema: {type: string, minLength: 1, maxLength: 255}
+  responses:
+    BadRequest:
+      description: Invalid request
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Organization:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        slug: {type: string}
+        country_code: {type: string}
+        status: {type: string}
+    CustomerCreate:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        email: {type: string, format: email}
+        phone: {type: string}
+    AccountCreate:
+      type: object
+      required: [currency]
+      properties:
+        customer_id: {type: string}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        account_type: {type: string, default: wallet}
+    CollectionCreate:
+      type: object
+      required: [amount, currency, reference]
+      properties:
+        customer_id: {type: string}
+        amount: {type: integer, format: int64, minimum: 1, description: Smallest currency unit}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        description: {type: string}
+        reference: {type: string}
+    TransferCreate:
+      type: object
+      required: [source_account_id, destination_account_id, amount, currency, reference]
+      properties:
+        source_account_id: {type: string}
+        destination_account_id: {type: string}
+        amount: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        reference: {type: string}
+    RiskAnalyze:
+      type: object
+      required: [transaction_reference, amount, currency]
+      properties:
+        transaction_reference: {type: string}
+        amount: {type: integer, minimum: 1}
+        currency: {type: string}
+    Error:
+      type: object
+      properties:
+        error: {type: string}
+        request_id: {type: string}
