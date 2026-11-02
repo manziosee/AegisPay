@@ -1,7 +1,7 @@
 # AegisPay
 
 [![Container build and scan](https://github.com/manziosee/AegisPay/actions/workflows/container-security.yml/badge.svg)](https://github.com/manziosee/AegisPay/actions/workflows/container-security.yml)
-![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
@@ -53,7 +53,7 @@ The Kubernetes Kustomize base deploys the same services with single replicas and
 
 | Area | Technology |
 | --- | --- |
-| Main API and background outbox worker | Go 1.23, `net/http`, `pgx`, Redis client |
+| Main API and background outbox worker | Go 1.27.3, `net/http`, `pgx`, Redis client |
 | Fraud scoring service | Python 3.12, FastAPI, Pydantic |
 | Data and rate limiting | PostgreSQL 16, Redis 7 |
 | API contract and explorer | OpenAPI 3.0.3, Swagger UI |
