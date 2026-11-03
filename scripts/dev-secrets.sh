@@ -14,7 +14,8 @@ admin_secret=$(openssl rand -hex 32)
 app_secret=$(openssl rand -hex 32)
 redis_secret=$(openssl rand -hex 32)
 api_secret=$(openssl rand -hex 32)
-webhook_secret=$(openssl rand -hex 32)
+encryption_key=$(openssl rand -hex 32)
+proxy_secret=$(openssl rand -hex 32)
 cat > .env <<EOF_ENV
 POSTGRES_DB=aegispay
 POSTGRES_USER=aegispay_admin
@@ -24,7 +25,8 @@ APP_DB_PASSWORD=$app_secret
 REDIS_PASSWORD=$redis_secret
 API_PORT=18080
 AEGIS_API_KEY=aegis_test_$api_secret
-WEBHOOK_ENCRYPTION_KEY=$webhook_secret
+ENCRYPTION_KEYS=k1:$encryption_key
+TRUSTED_PROXY_SECRET=$proxy_secret
 AEGIS_ORGANIZATION_ID=org_sandbox
 EOF_ENV
 chmod 600 .env

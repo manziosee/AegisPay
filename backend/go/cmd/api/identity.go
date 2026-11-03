@@ -351,6 +351,11 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		bad(w, r, "email and password are required")
 		return
 	}
+	// Per-account limit: unlike the per-IP limit, this cannot be avoided by
+	// spreading guesses across addresses.
+	if !a.limitAttempt(w, r, "login:"+tokenHash(strings.ToLower(strings.TrimSpace(in.Email))), 10, 15*time.Minute) {
+		return
+	}
 	var userID, hash, name string
 	err := a.db.QueryRowContext(r.Context(), `SELECT id,password_hash,full_name FROM users WHERE email=$1 AND status='active'`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID, &hash, &name)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) != nil {
@@ -539,30 +544,13 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodPost {
-		var in struct {
-			Email string `json:"email"`
-			Role  string `json:"role"`
-		}
-		if decode(r, &in) != nil || !validRole(in.Role) || in.Role == "owner" {
-			bad(w, r, "email and a non-owner role are required")
-			return
-		}
-		var userID string
-		err := a.db.QueryRowContext(r.Context(), `SELECT id FROM users WHERE email=$1`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID)
-		if err != nil {
-			writeJSON(w, 404, problem{Error: "user must register before being added to an organization"})
-			return
-		}
-		id := "mem_" + newID()
-		_, err = a.db.ExecContext(r.Context(), `INSERT INTO memberships(id,organization_id,user_id,role) VALUES($1,$2,$3,$4)`, id, org, userID, in.Role)
-		if err != nil {
-			writeJSON(w, 409, problem{Error: "membership already exists or could not be created"})
-			return
-		}
-		writeJSON(w, 201, map[string]any{"id": id, "user_id": userID, "role": in.Role, "status": "active"})
+		// Adding a user directly would join them without consent and reveal
+		// which email addresses are registered. Invitations are the only way in.
+		writeJSON(w, 410, problem{Error: "members join through invitations; use POST /v1/invitations", RequestID: requestID(r)})
 		return
 	}
 	if len(parts) == 2 && (r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		actor := principalFrom(r)
 		tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelSerializable})
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
@@ -577,6 +565,12 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 		}
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		// Owners and admins can only be changed by an owner, so an admin cannot
+		// remove the people above them or promote others to their own level.
+		if (role == "owner" || role == "admin") && !actorIsOwner(actor) {
+			writeJSON(w, 403, problem{Error: "only an owner can change an owner or admin membership", RequestID: requestID(r)})
 			return
 		}
 		if r.Method == http.MethodDelete {
@@ -623,6 +617,10 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 			bad(w, r, "role or status is required")
 			return
 		}
+		if in.Role == "admin" && !actorIsOwner(actor) {
+			writeJSON(w, 403, problem{Error: "only an owner can grant the admin role", RequestID: requestID(r)})
+			return
+		}
 		if role == "owner" && (in.Role != "" && in.Role != "owner" || in.Status == "suspended") {
 			var owners int
 			if err = tx.QueryRowContext(r.Context(), `SELECT count(*) FROM memberships WHERE organization_id=$1 AND role='owner' AND status='active'`, org).Scan(&owners); err != nil {
@@ -655,6 +653,12 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 	}
 	notFound(w, r)
 }
+// actorIsOwner reports whether the caller holds owner authority. The bootstrap
+// operator key is treated as an owner of the sandbox organization.
+func actorIsOwner(p principal) bool {
+	return p.bootstrap || p.role == "owner"
+}
+
 func validRole(r string) bool {
 	switch r {
 	case "owner", "admin", "finance_operator", "fraud_analyst", "developer", "auditor":

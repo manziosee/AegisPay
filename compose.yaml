@@ -51,6 +51,8 @@ services:
       DATABASE_URL: postgres://${APP_DB_USER:?Set APP_DB_USER in .env}:${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable
       AEGIS_API_KEY: ${AEGIS_API_KEY:?Set AEGIS_API_KEY in .env}
       WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:-}
+      ENCRYPTION_KEYS: ${ENCRYPTION_KEYS:-}
+      TRUSTED_PROXY_SECRET: ${TRUSTED_PROXY_SECRET:-}
       AEGIS_ORGANIZATION_ID: ${AEGIS_ORGANIZATION_ID:-org_sandbox}
       FRAUD_SERVICE_URL: http://fraud:8090
       REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
@@ -83,6 +85,8 @@ services:
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
+      API_PROXY_TARGET: http://api:8080
+      TRUSTED_PROXY_SECRET: ${TRUSTED_PROXY_SECRET:-}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

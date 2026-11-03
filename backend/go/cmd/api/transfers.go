@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -89,6 +90,12 @@ func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) 
 			state = "pending_approval"
 			httpStatus = 202
 		}
+		if !needsApproval {
+			if err = ensurePeriodOpen(r.Context(), tx, org, time.Now()); err != nil {
+				periodGuardFailure(w, r, err)
+				return
+			}
+		}
 		id := "trf_" + newID()
 		entry := "jrn_" + newID()
 		actor := principalFrom(r)
@@ -146,6 +153,18 @@ func (a *App) reviewTransfer(w http.ResponseWriter, r *http.Request, id, action 
 	p := principalFrom(r)
 	if p.userID == "" {
 		writeJSON(w, 403, problem{Error: "a distinct authenticated user must approve transfers"})
+		return
+	}
+	var in struct {
+		Note string `json:"note"`
+	}
+	if decodeOptional(r, &in) != nil {
+		bad(w, r, "request body must be a JSON object with an optional note")
+		return
+	}
+	in.Note = strings.TrimSpace(in.Note)
+	if len(in.Note) > 500 || action == "reject" && in.Note == "" {
+		bad(w, r, "a note of up to 500 characters is required to reject a transfer")
 		return
 	}
 	key, hash, err := requireIdempotencyKey(r)
@@ -242,6 +261,10 @@ func (a *App) reviewTransfer(w http.ResponseWriter, r *http.Request, id, action 
 		result["required_approvals"] = requiredApprovals
 	}
 	if decision == "approved" && finalApproval {
+		if err = ensurePeriodOpen(r.Context(), tx, org, time.Now()); err != nil {
+			periodGuardFailure(w, r, err)
+			return
+		}
 		var c string
 		err = tx.QueryRowContext(r.Context(), `SELECT currency FROM accounts WHERE id=$1 AND organization_id=$2 AND status='active' FOR UPDATE`, source, org).Scan(&c)
 		if err != nil || strings.TrimSpace(c) != strings.TrimSpace(currency) {
@@ -272,7 +295,7 @@ func (a *App) reviewTransfer(w http.ResponseWriter, r *http.Request, id, action 
 		_, err = tx.ExecContext(r.Context(), `UPDATE transfers SET status=$3 WHERE id=$1 AND organization_id=$2`, id, org, newStatus)
 	}
 	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO transfer_approvals(id,organization_id,transfer_id,approver_user_id,decision) VALUES($1,$2,$3,$4,$5)`, "apv_"+newID(), org, id, p.userID, decision)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO transfer_approvals(id,organization_id,transfer_id,approver_user_id,decision,note) VALUES($1,$2,$3,$4,$5,$6)`, "apv_"+newID(), org, id, p.userID, decision, in.Note)
 	}
 	eventType := "transfer.approval_recorded"
 	if decision == "approved" && finalApproval {
@@ -287,7 +310,7 @@ func (a *App) reviewTransfer(w http.ResponseWriter, r *http.Request, id, action 
 		} else if finalApproval {
 			actionName = "transfer.approved"
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,'transfer',$5,jsonb_build_object('decision',$6::text,'approvals_received',$7::integer,'required_approvals',$8::integer))`, "aud_"+newID(), org, p.userID, actionName, id, decision, receivedApprovals, requiredApprovals)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,'transfer',$5,jsonb_build_object('decision',$6::text,'approvals_received',$7::integer,'required_approvals',$8::integer,'note',$9::text))`, "aud_"+newID(), org, p.userID, actionName, id, decision, receivedApprovals, requiredApprovals, in.Note)
 	}
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "transfer review audit could not be recorded"})

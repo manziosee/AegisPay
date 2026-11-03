@@ -58,7 +58,7 @@ export default function SettingsPage() {
     // context does not load them for those roles.
     if (!session || canEdit) return;
     let active = true;
-    void api<{ data: TransactionPolicy[] }>("/transaction-policies", session.access_token)
+    void api<{ data: TransactionPolicy[] }>("/transaction-policies")
       .then((result) => {
         if (active) setFallbackPolicies(result.data ?? []);
       })
@@ -133,7 +133,7 @@ export default function SettingsPage() {
     setSaving(true);
     setError("");
     try {
-      await api("/transaction-policies", session.access_token, {
+      await api("/transaction-policies", {
         method: "PUT",
         body: JSON.stringify(body)
       });

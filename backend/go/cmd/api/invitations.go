@@ -66,11 +66,15 @@ func (a *App) invitations(w http.ResponseWriter, r *http.Request, parts []string
 			bad(w, r, "a valid email and non-owner role are required")
 			return
 		}
+		p := principalFrom(r)
+		if in.Role == "admin" && !actorIsOwner(p) {
+			writeJSON(w, 403, problem{Error: "only an owner can invite an admin", RequestID: requestID(r)})
+			return
+		}
 		in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 		token := "aegis_invite_" + newID()
 		id := "inv_" + newID()
 		expires := time.Now().UTC().Add(7 * 24 * time.Hour)
-		p := principalFrom(r)
 		_, err := a.db.ExecContext(r.Context(), `INSERT INTO organization_invitations(id,organization_id,email,role,token_hash,expires_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, org, in.Email, in.Role, tokenHash(token), expires, nullable(p.userID))
 		if err != nil {
 			writeJSON(w, 409, problem{Error: "invitation could not be created; check for an existing user or invitation"})

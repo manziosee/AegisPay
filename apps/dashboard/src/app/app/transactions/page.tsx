@@ -95,8 +95,7 @@ export default function TransactionsPage() {
         cursor: next
       });
       const report = await api<TransactionReport>(
-        `/reports/transactions?${params.toString()}`,
-        session.access_token
+        `/reports/transactions?${params.toString()}`
       );
       setExtraRows((current) => [...current, ...report.data]);
       setCursor(report.next_cursor);
@@ -122,7 +121,7 @@ export default function TransactionsPage() {
       if (type !== "all") params.set("type", type);
       if (status !== "all") params.set("status", status);
       if (currency !== "all") params.set("currency", currency);
-      const blob = await apiBlob(`/reports/transactions?${params.toString()}`, session.access_token);
+      const blob = await apiBlob(`/reports/transactions?${params.toString()}`);
       downloadBlob(blob, "aegispay-transactions.csv");
       toast.success("CSV exported for the filtered report page.");
     } catch (error) {

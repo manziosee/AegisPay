@@ -1,33 +1,22 @@
 package main
 
 import (
-	"bytes"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
-
-type csvStatementLine struct {
-	Reference string `json:"external_reference"`
-	Amount    int64  `json:"amount"`
-	Fee       int64  `json:"provider_fee"`
-	Currency  string `json:"currency"`
-	Date      string `json:"transaction_date"`
-}
 
 func (a *App) importStatementCSV(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Source string `json:"source_name"`
 		CSV    string `json:"csv"`
 	}
-	if decode(r, &in) != nil || strings.TrimSpace(in.CSV) == "" || len(in.CSV) > 1<<20 {
+	if decodeWithLimit(r, &in, reconciliationBodyLimit) != nil || strings.TrimSpace(in.CSV) == "" || len(in.CSV) > 1<<20 {
 		bad(w, r, "a CSV statement up to 1 MiB is required")
 		return
 	}
@@ -69,7 +58,7 @@ func (a *App) importStatementCSV(w http.ResponseWriter, r *http.Request) {
 		bad(w, r, "CSV needs an amount or amount_minor column")
 		return
 	}
-	lines := make([]csvStatementLine, 0)
+	lines := make([]statementLine, 0)
 	for {
 		record, readErr := reader.Read()
 		if readErr == io.EOF {
@@ -82,7 +71,7 @@ func (a *App) importStatementCSV(w http.ResponseWriter, r *http.Request) {
 		if len(record) == 1 && strings.TrimSpace(record[0]) == "" {
 			continue
 		}
-		if len(lines) >= 10000 {
+		if len(lines) >= maxStatementLines {
 			bad(w, r, "CSV may contain at most 10000 statement lines")
 			return
 		}
@@ -126,7 +115,7 @@ func (a *App) importStatementCSV(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		lines = append(lines, csvStatementLine{Reference: ref, Amount: amount, Fee: fee, Currency: currency, Date: date})
+		lines = append(lines, statementLine{Reference: ref, Amount: amount, Fee: fee, Currency: currency, Date: date})
 	}
 	if len(lines) == 0 {
 		bad(w, r, "CSV must contain at least one statement line")
@@ -135,20 +124,7 @@ func (a *App) importStatementCSV(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.Source) == "" {
 		in.Source = "bank-statement.csv"
 	}
-	payload, err := json.Marshal(map[string]any{"source_name": in.Source, "lines": lines})
-	if err != nil {
-		writeJSON(w, 500, problem{Error: "CSV could not be converted to statement lines"})
-		return
-	}
-	internal, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/v1/reconciliation/imports", bytes.NewReader(payload))
-	if err != nil {
-		writeJSON(w, 500, problem{Error: "CSV import request could not be prepared"})
-		return
-	}
-	internal.Header = r.Header.Clone()
-	internal.Header.Set("Content-Type", "application/json")
-	internal.URL = &url.URL{Path: "/v1/reconciliation/imports"}
-	a.reconciliation(w, internal, []string{"reconciliation", "imports"})
+	a.importStatementLines(w, r, currentOrgID(r, a.orgID), in.Source, lines)
 }
 
 func parseStatementAmount(minor, major, currency string, hasMinor bool) (int64, error) {

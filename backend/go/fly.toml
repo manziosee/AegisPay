@@ -1,0 +1,48 @@
+# Fly.io configuration for the AegisPay Go API.
+# Deployed by .github/workflows/deploy-backend.yml on every push to main that
+# touches backend/go; run `fly deploy` from this directory to deploy by hand.
+# Secrets (DATABASE_URL, REDIS_URL, AEGIS_API_KEY, ENCRYPTION_KEYS,
+# TRUSTED_PROXY_SECRET) are set with `fly secrets set`, never in this file.
+
+app = 'aegispay'
+primary_region = 'cdg'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  HTTP_ADDR = ':8080'
+  AEGIS_ORGANIZATION_ID = 'org_sandbox'
+  # Fly's edge overwrites this header with the real client address.
+  TRUSTED_CLIENT_IP_HEADER = 'Fly-Client-IP'
+  SWAGGER_ORIGIN = 'https://aegispay.fly.dev'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # One machine stays up so the webhook worker and maintenance jobs keep
+  # running between requests.
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    method = 'GET'
+    path = '/health/ready'
+    interval = '15s'
+    timeout = '5s'
+    grace_period = '30s'
+
+[deploy]
+  strategy = 'rolling'
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+  memory_mb = 1024

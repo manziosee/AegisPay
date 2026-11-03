@@ -99,11 +99,11 @@ export default function ControlsPage() {
     setLoading(true);
     try {
       const [healthState, periodPage, auditPage, delegationResult] = await Promise.all([
-        api<ControlHealth>("/bank-operations/health", session.access_token),
-        api<Page<ClosePeriod>>("/bank-operations/periods", session.access_token),
-        api<Page<AuditEntry>>("/audit-logs?limit=100", session.access_token),
+        api<ControlHealth>("/bank-operations/health"),
+        api<Page<ClosePeriod>>("/bank-operations/periods"),
+        api<Page<AuditEntry>>("/audit-logs?limit=100"),
         admin
-          ? api<{ data: Delegation[] }>("/bank-operations/delegations", session.access_token)
+          ? api<{ data: Delegation[] }>("/bank-operations/delegations")
           : Promise.resolve({ data: [] as Delegation[] })
       ]);
       setHealth(healthState);
@@ -132,7 +132,7 @@ export default function ControlsPage() {
     setBusy("period");
     setPeriodError("");
     try {
-      await api("/bank-operations/periods", session.access_token, {
+      await api("/bank-operations/periods", {
         method: "POST",
         body: JSON.stringify(periodForm)
       });
@@ -155,7 +155,7 @@ export default function ControlsPage() {
     }
     setBusy(period.id);
     try {
-      await api(`/bank-operations/periods/${encodeURIComponent(period.id)}/${action}`, session.access_token, {
+      await api(`/bank-operations/periods/${encodeURIComponent(period.id)}/${action}`, {
         method: "POST",
         body: JSON.stringify({ note })
       });
@@ -179,7 +179,7 @@ export default function ControlsPage() {
         mode?: string;
         ledger_changed?: boolean;
         funds_moved?: boolean;
-      }>("/bank-operations/scenarios/simulate", session.access_token, {
+      }>("/bank-operations/scenarios/simulate", {
         method: "POST",
         body: JSON.stringify({ scenario_type: scenario })
       });
@@ -204,7 +204,7 @@ export default function ControlsPage() {
     }
     setBusy("delegation");
     try {
-      await api("/bank-operations/delegations", session.access_token, {
+      await api("/bank-operations/delegations", {
         method: "POST",
         body: JSON.stringify({
           ...delegationForm,
@@ -225,7 +225,7 @@ export default function ControlsPage() {
     if (!session) return;
     setBusy(delegation.id);
     try {
-      await api(`/bank-operations/delegations/${encodeURIComponent(delegation.id)}/revoke`, session.access_token, {
+      await api(`/bank-operations/delegations/${encodeURIComponent(delegation.id)}/revoke`, {
         method: "POST",
         body: JSON.stringify({})
       });
@@ -243,8 +243,7 @@ export default function ControlsPage() {
     setAuditLoading(true);
     try {
       const page = await api<Page<AuditEntry>>(
-        `/audit-logs?limit=100&cursor=${encodeURIComponent(auditCursor)}`,
-        session.access_token
+        `/audit-logs?limit=100&cursor=${encodeURIComponent(auditCursor)}`
       );
       setAudit((current) => [...current, ...(page.data ?? [])]);
       setAuditCursor(page.next_cursor ?? null);

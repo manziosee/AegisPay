@@ -17,7 +17,7 @@ export default function ApprovalsPage() {
   const { data, loading } = useWorkspaceData();
   const pending = data.transfers.filter((item) => item.status === "pending_approval");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { decide, busyId, error } = useTransferDecision();
+  const { decide, busyId, error, rejectDialog } = useTransferDecision();
 
   useEffect(() => {
     if (selectedId && !pending.some((item) => item.id === selectedId)) {
@@ -29,6 +29,7 @@ export default function ApprovalsPage() {
 
   return (
     <div>
+      {rejectDialog}
       <PageHeader
         title="Transfer approvals"
         description="Record independent reviewer decisions. A transfer posts only after its configured approval count is met."

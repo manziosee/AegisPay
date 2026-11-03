@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSession } from "@/components/providers/session-provider";
 import { useWorkspaceData } from "@/components/providers/workspace-data-provider";
-import { api, apiBlob, downloadBlob, errorMessage, idempotencyKey } from "@/lib/api";
+import { api, apiBlob, apiIdempotent, downloadBlob, errorMessage } from "@/lib/api";
 import { formatDate, formatMinor, majorToMinor, minorHint } from "@/lib/format";
 import type { BankPayout, BankRequest, Page } from "@/lib/types";
 
@@ -46,8 +46,8 @@ export default function MoneyPage() {
     setLoading(true);
     try {
       const [requestPage, payoutPage] = await Promise.all([
-        api<Page<BankRequest>>("/bank-operations/requests", session.access_token),
-        api<Page<BankPayout>>("/bank-operations/payouts", session.access_token)
+        api<Page<BankRequest>>("/bank-operations/requests"),
+        api<Page<BankPayout>>("/bank-operations/payouts")
       ]);
       setRequests(requestPage.data ?? []);
       setPayouts(payoutPage.data ?? []);
@@ -73,7 +73,7 @@ export default function MoneyPage() {
     setBusy("request");
     setFormError("");
     try {
-      const result = await api<BankRequest>("/bank-operations/requests", session.access_token, {
+      const result = await api<BankRequest>("/bank-operations/requests", {
         method: "POST",
         body: JSON.stringify({ ...requestForm, amount: minor })
       });
@@ -100,7 +100,7 @@ export default function MoneyPage() {
     setBusy("payout");
     setFormError("");
     try {
-      const result = await api<BankPayout>("/bank-operations/payouts", session.access_token, {
+      const result = await api<BankPayout>("/bank-operations/payouts", {
         method: "POST",
         body: JSON.stringify({ ...payoutForm, amount: minor })
       });
@@ -143,14 +143,9 @@ export default function MoneyPage() {
     if (!session || !csv || !fileName) return;
     setStatementBusy(true);
     try {
-      const result = await api<{ id: string; matched_count: number; exception_count: number }>(
+      const result = await apiIdempotent<{ id: string; matched_count: number; exception_count: number }>(
         "/reconciliation/imports/csv",
-        session.access_token,
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": idempotencyKey() },
-          body: JSON.stringify({ source_name: fileName, csv })
-        }
+        { source_name: fileName, csv }
       );
       setCSV("");
       setFileName("");
@@ -169,7 +164,7 @@ export default function MoneyPage() {
     if (!session) return;
     setBusy("export");
     try {
-      const blob = await apiBlob("/bank-operations/payouts/export", session.access_token, {
+      const blob = await apiBlob("/bank-operations/payouts/export", {
         method: "POST"
       });
       downloadBlob(blob, "aegispay-payout-register.csv");
@@ -191,7 +186,7 @@ export default function MoneyPage() {
     }
     setBusy(payout.id);
     try {
-      await api(`/bank-operations/payouts/${encodeURIComponent(payout.id)}/submit`, session.access_token, {
+      await api(`/bank-operations/payouts/${encodeURIComponent(payout.id)}/submit`, {
         method: "POST",
         body: JSON.stringify({ note })
       });
@@ -214,14 +209,9 @@ export default function MoneyPage() {
     }
     setBusy(payout.id);
     try {
-      const result = await api<{ status: string; approvals_received: number; required_approvals: number }>(
+      const result = await apiIdempotent<{ status: string; approvals_received: number; required_approvals: number }>(
         `/bank-operations/payouts/${encodeURIComponent(payout.id)}/${action}`,
-        session.access_token,
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": idempotencyKey() },
-          body: JSON.stringify({ note })
-        }
+        { note }
       );
       setNotes((current) => ({ ...current, [payout.id]: "" }));
       toast.success(

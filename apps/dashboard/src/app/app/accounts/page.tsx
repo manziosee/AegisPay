@@ -52,13 +52,12 @@ export default function AccountsPage() {
     setLoading(true);
     setLoadError("");
     try {
-      const page = await api<Page<Account>>("/accounts?limit=25", session.access_token);
+      const page = await api<Page<Account>>("/accounts?limit=25");
       const base = page.data ?? [];
       const balances = await withConcurrency(base, 4, async (account) => {
         try {
           const result = await api<{ balance_minor: number }>(
-            `/accounts/${encodeURIComponent(account.id)}/balance`,
-            session.access_token
+            `/accounts/${encodeURIComponent(account.id)}/balance`
           );
           return { id: account.id, balance: result.balance_minor };
         } catch (error) {
@@ -79,8 +78,7 @@ export default function AccountsPage() {
       );
       try {
         const entries = await api<{ data: LedgerEntry[] }>(
-          "/ledger/entries",
-          session.access_token
+          "/ledger/entries"
         );
         setLedger(entries.data ?? []);
       } catch {
@@ -118,7 +116,7 @@ export default function AccountsPage() {
     setCreating(true);
     setCreateError("");
     try {
-      await api<Account>("/accounts", session.access_token, {
+      await api<Account>("/accounts", {
         method: "POST",
         body: JSON.stringify({ currency: currency.trim().toUpperCase(), account_type: "wallet" })
       });

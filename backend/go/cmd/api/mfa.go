@@ -26,6 +26,9 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 		notFound(w, r)
 		return
 	}
+	if (parts[0] == "verify" || parts[0] == "disable") && !a.limitAttempt(w, r, "mfa-manage:"+p.userID, 10, 15*time.Minute) {
+		return
+	}
 	switch parts[0] {
 	case "enroll":
 		if r.Method != http.MethodPost {
@@ -48,7 +51,7 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 			return
 		}
 		secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(key)
-		ciphertext, err := sealWebhookSecret(secret)
+		ciphertext, err := sealSecret(purposeMFASecret, secret)
 		if err != nil {
 			writeJSON(w, 503, problem{Error: "MFA encryption is not configured"})
 			return
@@ -79,7 +82,7 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 			notFound(w, r)
 			return
 		}
-		secret, err := openWebhookSecret(ciphertext)
+		secret, err := openSecret(purposeMFASecret, ciphertext)
 		if err != nil || !verifyTOTP(secret, in.Code, time.Now()) {
 			writeJSON(w, 401, problem{Error: "invalid authenticator code"})
 			return
@@ -111,7 +114,7 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 			writeJSON(w, 401, problem{Error: "invalid credentials"})
 			return
 		}
-		secret, err := openWebhookSecret(ciphertext)
+		secret, err := openSecret(purposeMFASecret, ciphertext)
 		if err != nil || !enabled || !verifyTOTP(secret, in.Code, time.Now()) {
 			writeJSON(w, 401, problem{Error: "invalid authenticator code"})
 			return
@@ -136,6 +139,11 @@ func (a *App) verifyMFALogin(w http.ResponseWriter, r *http.Request) {
 		bad(w, r, "mfa_token and six-digit authenticator code are required")
 		return
 	}
+	// A challenge lives five minutes; five guesses keeps a six-digit code safe
+	// no matter how many client addresses an attacker uses.
+	if !a.limitAttempt(w, r, "mfa-login:"+tokenHash(in.Token), 5, 5*time.Minute) {
+		return
+	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "database error"})
@@ -149,7 +157,7 @@ func (a *App) verifyMFALogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, problem{Error: "invalid or expired MFA challenge"})
 		return
 	}
-	secret, err := openWebhookSecret(ciphertext)
+	secret, err := openSecret(purposeMFASecret, ciphertext)
 	if err != nil || !verifyTOTP(secret, in.Code, time.Now()) {
 		writeJSON(w, 401, problem{Error: "invalid authenticator code"})
 		return

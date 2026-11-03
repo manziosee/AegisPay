@@ -44,6 +44,7 @@ const transaction = {
 type MockOptions = {
   role?: "owner" | "finance_operator" | "fraud_analyst" | "auditor";
   onApproved?: (body: unknown, key: string | null) => void;
+  onRejected?: (body: unknown, key: string | null) => void;
   onReconciliationResolved?: (body: unknown) => void;
   onFraudResolved?: (body: unknown) => void;
 };
@@ -74,15 +75,17 @@ export async function signInWithMockWorkspace(page: Page, options: MockOptions =
   let approved = false;
   let reconciliationResolved = false;
   let fraudResolved = false;
+  // Mirrors the httpOnly session cookie: /auth/me answers 401 until sign-in.
+  let signedIn = false;
 
   await page.route("**/proxy/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/proxy/v1", "");
     const method = request.method();
     if (path === "/auth/login" && method === "POST") {
+      signedIn = true;
       await route.fulfill({
         json: {
-          access_token: "session_e2e",
           user_id: "usr_demo",
           full_name: "Avery Demo",
           organization_id: "org_demo",
@@ -93,6 +96,10 @@ export async function signInWithMockWorkspace(page: Page, options: MockOptions =
       return;
     }
     if (path === "/auth/me") {
+      if (!signedIn) {
+        await route.fulfill({ status: 401, json: { error: "unauthorized" } });
+        return;
+      }
       await route.fulfill({
         json: { organization_id: "org_demo", user_id: "usr_demo", role, credential_type: "user" }
       });
@@ -175,6 +182,12 @@ export async function signInWithMockWorkspace(page: Page, options: MockOptions =
     }
     if (path === "/transaction-policies" && method === "GET") {
       await route.fulfill({ json: { data: [] } });
+      return;
+    }
+    if (path === "/transfers/trf_demo_1/reject" && method === "POST") {
+      approved = true;
+      options.onRejected?.(request.postDataJSON(), request.headers()["idempotency-key"] ?? null);
+      await route.fulfill({ json: { id: transfer.id, status: "rejected" } });
       return;
     }
     if (path === "/transfers/trf_demo_1/approve" && method === "POST") {

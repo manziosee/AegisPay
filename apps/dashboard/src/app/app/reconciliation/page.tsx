@@ -61,8 +61,7 @@ export default function ReconciliationPage() {
     let active = true;
     setLinesLoading(true);
     void api<{ lines: ReconciliationLine[] }>(
-      `/reconciliation/imports/${encodeURIComponent(selectedImportId)}`,
-      session.access_token
+      `/reconciliation/imports/${encodeURIComponent(selectedImportId)}`
     )
       .then((detail) => {
         if (active) setLines(detail.lines ?? []);
@@ -87,7 +86,7 @@ export default function ReconciliationPage() {
     setCollections([]);
     setCollectionsError("");
     setCollectionsLoading(true);
-    void api<Page<Collection>>("/collections?limit=100", session.access_token)
+    void api<Page<Collection>>("/collections?limit=100")
       .then((page) => {
         if (active) setCollections(page.data ?? []);
       })
@@ -135,7 +134,7 @@ export default function ReconciliationPage() {
     setSaving(true);
     setDialogError("");
     try {
-      await api(`/reconciliation/imports/${encodeURIComponent(selectedImportId)}/lines/${action.line.line_id}/resolve`, session.access_token, {
+      await api(`/reconciliation/imports/${encodeURIComponent(selectedImportId)}/lines/${action.line.line_id}/resolve`, {
         method: "POST",
         body: JSON.stringify({
           resolution: action.resolution,
@@ -149,8 +148,7 @@ export default function ReconciliationPage() {
         refresh(),
         selectedImportId
           ? api<{ lines: ReconciliationLine[] }>(
-              `/reconciliation/imports/${encodeURIComponent(selectedImportId)}`,
-              session.access_token
+              `/reconciliation/imports/${encodeURIComponent(selectedImportId)}`
             ).then((detail) => setLines(detail.lines ?? []))
           : Promise.resolve()
       ]);

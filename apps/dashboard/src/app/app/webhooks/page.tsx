@@ -34,8 +34,8 @@ export default function WebhooksPage() {
     setLoading(true);
     try {
       const [deliveryPage, endpointResult] = await Promise.all([
-        api<Page<WebhookDelivery>>("/webhook-deliveries?limit=25", session.access_token),
-        api<{ data: WebhookEndpoint[] }>("/webhook-endpoints", session.access_token)
+        api<Page<WebhookDelivery>>("/webhook-deliveries?limit=25"),
+        api<{ data: WebhookEndpoint[] }>("/webhook-endpoints")
       ]);
       setDeliveries(deliveryPage.data ?? []);
       setCursor(deliveryPage.next_cursor ?? null);
@@ -59,8 +59,7 @@ export default function WebhooksPage() {
     setLoadingMore(true);
     try {
       const page = await api<Page<WebhookDelivery>>(
-        `/webhook-deliveries?limit=25&cursor=${encodeURIComponent(cursor)}`,
-        session.access_token
+        `/webhook-deliveries?limit=25&cursor=${encodeURIComponent(cursor)}`
       );
       setDeliveries((current) => [...current, ...(page.data ?? [])]);
       setCursor(page.next_cursor ?? null);
@@ -75,7 +74,7 @@ export default function WebhooksPage() {
     if (!session) return;
     setBusy(delivery.id);
     try {
-      await api(`/webhook-deliveries/${encodeURIComponent(delivery.id)}/retry`, session.access_token, {
+      await api(`/webhook-deliveries/${encodeURIComponent(delivery.id)}/retry`, {
         method: "POST"
       });
       toast.success("Delivery queued for another attempt.");

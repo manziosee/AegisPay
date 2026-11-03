@@ -88,11 +88,23 @@ func main() {
 		slog.Error("bootstrap", "error", err)
 		os.Exit(1)
 	}
+	if os.Getenv("ENCRYPTION_KEYS") != "" || os.Getenv("WEBHOOK_ENCRYPTION_KEY") != "" {
+		if _, err = loadKeyRing(); err != nil {
+			slog.Error("secret encryption keys", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Warn("no ENCRYPTION_KEYS configured; webhook endpoints and MFA enrollment are unavailable")
+	}
+	_ = loadClientIPConfig()
 	go a.runOutboxWorker(context.Background())
+	go a.runMaintenance(context.Background())
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /health/ready", a.ready)
 	mux.HandleFunc("GET /metrics", metricsHandler)
+	mux.HandleFunc("GET /openapi.yaml", openAPIHandler)
+	mux.HandleFunc("GET /docs", docsHandler)
 	mux.HandleFunc("POST /v1/auth/register", a.register)
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("POST /v1/auth/mfa/verify-login", a.verifyMFALogin)
@@ -229,15 +241,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
-func decode(r *http.Request, dst any) error {
-	const limit = 1 << 20
-	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+func decode(r *http.Request, dst any) error { return decodeWithLimit(r, dst, 1<<20) }
+
+// decodeWithLimit reads a JSON body of at most limit bytes into dst and
+// records the request hash used for idempotency.
+func decodeWithLimit(r *http.Request, dst any, limit int) error {
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	_ = r.Body.Close()
 	if err != nil {
 		return err
 	}
 	if len(body) > limit {
-		return fmt.Errorf("request body exceeds 1 MiB")
+		return fmt.Errorf("request body exceeds %d bytes", limit)
 	}
 	fingerprint := r.Method + "\n" + r.URL.EscapedPath() + "\n"
 	hash := sha256.Sum256(append([]byte(fingerprint), body...))
@@ -247,6 +262,13 @@ func decode(r *http.Request, dst any) error {
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
 }
+// decodeOptional is decode for endpoints whose body may be omitted entirely.
+func decodeOptional(r *http.Request, dst any) error {
+	if err := decode(r, dst); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
 func (a *App) route(w http.ResponseWriter, r *http.Request) {
 	p := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
 	seg := strings.Split(p, "/")
@@ -254,7 +276,15 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 	case "auth":
 		if len(seg) == 2 && seg[1] == "me" && r.Method == "GET" {
 			p := principalFrom(r)
-			writeJSON(w, 200, map[string]any{"organization_id": currentOrgID(r, a.orgID), "user_id": p.userID, "role": p.role, "credential_type": map[bool]string{true: "bootstrap", false: "user"}[p.bootstrap]})
+			out := map[string]any{"organization_id": currentOrgID(r, a.orgID), "user_id": p.userID, "role": p.role, "credential_type": map[bool]string{true: "bootstrap", false: "user"}[p.bootstrap]}
+			if p.sessionID != "" {
+				var name, email string
+				var expires time.Time
+				if err := a.db.QueryRowContext(r.Context(), `SELECT u.full_name,u.email,s.expires_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1`, p.sessionID).Scan(&name, &email, &expires); err == nil {
+					out["full_name"], out["email"], out["expires_at"] = name, email, expires
+				}
+			}
+			writeJSON(w, 200, out)
 			return
 		}
 		if len(seg) == 2 && seg[1] == "logout" && r.Method == "POST" {
@@ -507,6 +537,10 @@ func (a *App) accounts(w http.ResponseWriter, r *http.Request, s []string) {
 		}
 		if replayed {
 			writeRawJSON(w, cachedStatus, cachedBody)
+			return
+		}
+		if e = ensurePeriodOpen(r.Context(), tx, currentOrgID(r, a.orgID), time.Now()); e != nil {
+			periodGuardFailure(w, r, e)
 			return
 		}
 		var cur string

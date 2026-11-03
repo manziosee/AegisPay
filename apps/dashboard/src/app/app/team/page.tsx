@@ -54,8 +54,8 @@ export default function TeamPage() {
     setLoading(true);
     try {
       const [memberResult, invitationPage] = await Promise.all([
-        api<{ data: Member[] }>("/members", session.access_token),
-        api<Page<Invitation>>("/invitations?limit=100", session.access_token)
+        api<{ data: Member[] }>("/members"),
+        api<Page<Invitation>>("/invitations?limit=100")
       ]);
       setMembers(memberResult.data ?? []);
       setInvitations(invitationPage.data ?? []);
@@ -77,7 +77,6 @@ export default function TeamPage() {
     try {
       const result = await api<{ invite_token: string; email: string }>(
         "/invitations",
-        session.access_token,
         { method: "POST", body: JSON.stringify(inviteForm) }
       );
       setInviteToken(result.invite_token);
@@ -95,7 +94,7 @@ export default function TeamPage() {
     if (!session) return;
     setBusy(member.membership_id);
     try {
-      await api(`/members/${encodeURIComponent(member.membership_id)}`, session.access_token, {
+      await api(`/members/${encodeURIComponent(member.membership_id)}`, {
         method: "DELETE"
       });
       toast.success(`Access suspended for ${member.email}.`);

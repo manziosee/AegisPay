@@ -2,7 +2,7 @@ export type ApiError = Error & { status?: number; requestId?: string };
 
 let unauthorizedHandler: (() => void) | null = null;
 
-/** Registers the callback used when a request carrying a bearer token returns 401. */
+/** Registers the callback used when an authenticated request returns 401. */
 export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler;
 }
@@ -17,17 +17,25 @@ async function parsePayload(response: Response): Promise<unknown> {
   }
 }
 
-async function request<T>(path: string, token?: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+export type ApiInit = RequestInit & {
+  /** Do not treat a 401 as an expired session (used for session probes and sign-in). */
+  anonymous?: boolean;
+};
+
+// The session token is an httpOnly cookie managed by the same-origin proxy
+// (src/app/proxy/[...path]/route.ts); browser code never handles it.
+async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
+  const { anonymous, ...fetchInit } = init;
+  const headers = new Headers(fetchInit.headers);
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
+  if (fetchInit.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(`/proxy/v1${path}`, {
-    ...init,
+    ...fetchInit,
     headers,
+    credentials: "same-origin",
     cache: "no-store"
   });
   const payload = await parsePayload(response);
@@ -39,23 +47,21 @@ async function request<T>(path: string, token?: string, init: RequestInit = {}):
     ) as ApiError;
     error.status = response.status;
     error.requestId = body?.request_id ?? response.headers.get("X-Request-ID") ?? undefined;
-    if (response.status === 401 && token) unauthorizedHandler?.();
+    if (response.status === 401 && !anonymous) unauthorizedHandler?.();
     throw error;
   }
   return payload as T;
 }
 
-export function api<T>(path: string, token?: string, init: RequestInit = {}): Promise<T> {
-  return request<T>(path, token, init);
+export function api<T>(path: string, init: ApiInit = {}): Promise<T> {
+  return request<T>(path, init);
 }
 
-/** CSV and other binary downloads. Keeps the same origin and bearer auth. */
-export async function apiBlob(path: string, token: string, init: RequestInit = {}): Promise<Blob> {
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+/** CSV and other binary downloads through the same-origin proxy. */
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
   const response = await fetch(`/proxy/v1${path}`, {
     ...init,
-    headers,
+    credentials: "same-origin",
     cache: "no-store"
   });
   if (!response.ok) {
@@ -75,6 +81,28 @@ export function idempotencyKey(): string {
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
   return `dash_${random}`;
+}
+
+// One key per user intent (endpoint + payload), kept until the server
+// confirms success. A retry after a timeout or dropped connection reuses the
+// key, so the API replays the original result instead of acting twice.
+// Module scope keeps the key if the user navigates away and back.
+const pendingIdempotencyKeys = new Map<string, string>();
+
+/** POSTs body with an Idempotency-Key that is stable across retries of the same request. */
+export async function apiIdempotent<T>(path: string, body: unknown = {}, init: ApiInit = {}): Promise<T> {
+  const payload = JSON.stringify(body);
+  const intent = `${path}\n${payload}`;
+  let key = pendingIdempotencyKeys.get(intent);
+  if (!key) {
+    key = idempotencyKey();
+    pendingIdempotencyKeys.set(intent, key);
+  }
+  const headers = new Headers(init.headers);
+  headers.set("Idempotency-Key", key);
+  const result = await request<T>(path, { ...init, method: init.method ?? "POST", headers, body: payload });
+  pendingIdempotencyKeys.delete(intent);
+  return result;
 }
 
 export function errorMessage(error: unknown): string {

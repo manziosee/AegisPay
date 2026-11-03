@@ -100,7 +100,7 @@ export default function IntelligencePage() {
     setEvaluating(true);
     setError("");
     try {
-      const result = await api<FraudAssessment>("/fraud/analyze", session.access_token, {
+      const result = await api<FraudAssessment>("/fraud/analyze", {
         method: "POST",
         body: JSON.stringify({
           transaction_reference: reference.trim(),
@@ -131,7 +131,7 @@ export default function IntelligencePage() {
     setResolving(true);
     setResolveError("");
     try {
-      await api(`/fraud/cases/${encodeURIComponent(item.id)}/resolve`, session.access_token, {
+      await api(`/fraud/cases/${encodeURIComponent(item.id)}/resolve`, {
         method: "POST",
         body: JSON.stringify({ outcome, note: note.trim() })
       });

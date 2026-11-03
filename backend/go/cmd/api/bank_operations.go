@@ -512,7 +512,7 @@ func (a *App) exportPayoutRegister(w http.ResponseWriter, r *http.Request, org s
 	writer := csv.NewWriter(&output)
 	if err = writer.Write([]string{"beneficiary_name", "amount_minor", "currency", "reference", "description"}); err == nil {
 		for _, item := range items {
-			if err = writer.Write([]string{item.beneficiary, fmt.Sprint(item.amount), strings.TrimSpace(item.currency), item.reference, item.description}); err != nil {
+			if err = writer.Write([]string{csvSafe(item.beneficiary), fmt.Sprint(item.amount), strings.TrimSpace(item.currency), csvSafe(item.reference), csvSafe(item.description)}); err != nil {
 				break
 			}
 		}

@@ -55,12 +55,12 @@ export function WorkspaceDataProvider({ children }: { children: React.ReactNode 
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!session?.access_token || status !== "authenticated" || !role) return;
+    if (!session || status !== "authenticated" || !role) return;
     setLoading(true);
     const collected: ResourceError[] = [];
     const load = async <T,>(resource: string, path: string): Promise<T | undefined> => {
       try {
-        return await api<T>(path, session.access_token);
+        return await api<T>(path);
       } catch (error) {
         collected.push({ resource, message: errorMessage(error) });
         return undefined;

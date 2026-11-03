@@ -181,7 +181,7 @@ export default function OverviewPage() {
   const { data, counts, loading } = useWorkspaceData();
   const [queue, setQueue] = useState<QueueKey>("approvals");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { decide, busyId, error } = useTransferDecision();
+  const { decide, busyId, error, rejectDialog } = useTransferDecision();
 
   const pendingTransfers = data.transfers.filter((item) => item.status === "pending_approval");
   const openCases = data.fraudCases.filter((item) => item.status !== "resolved");
@@ -278,6 +278,7 @@ export default function OverviewPage() {
   return (
     <div>
       {header}
+      {rejectDialog}
 
       <MetaStrip counts={counts} />
 

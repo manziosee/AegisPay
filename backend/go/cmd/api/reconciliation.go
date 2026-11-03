@@ -2,8 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -24,210 +22,7 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 		return
 	}
 	if len(parts) == 2 && parts[1] == "imports" && r.Method == http.MethodPost {
-		var in struct {
-			Source string `json:"source_name"`
-			Lines  []struct {
-				Reference string `json:"external_reference"`
-				Amount    int64  `json:"amount"`
-				Fee       int64  `json:"provider_fee"`
-				Currency  string `json:"currency"`
-				Date      string `json:"transaction_date"`
-			} `json:"lines"`
-		}
-		if decode(r, &in) != nil || len(in.Lines) == 0 || len(in.Lines) > 10000 {
-			bad(w, r, "between 1 and 10000 statement lines are required")
-			return
-		}
-		dates := make([]time.Time, len(in.Lines))
-		for i, line := range in.Lines {
-			if strings.TrimSpace(line.Reference) == "" || len(line.Currency) != 3 || line.Amount <= 0 || line.Fee < 0 || line.Amount > math.MaxInt64-line.Fee {
-				bad(w, r, "each line requires an external_reference, positive net amount, non-negative provider_fee, and three-letter currency")
-				return
-			}
-			dates[i] = time.Now().UTC()
-			if line.Date != "" {
-				var err error
-				dates[i], err = time.Parse(time.RFC3339, line.Date)
-				if err != nil {
-					bad(w, r, "transaction_date values must use RFC3339")
-					return
-				}
-			}
-		}
-		key, hash, err := requireIdempotencyKey(r)
-		if err != nil {
-			bad(w, r, err.Error())
-			return
-		}
-		tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelSerializable})
-		if err != nil {
-			writeJSON(w, 500, problem{Error: "database error"})
-			return
-		}
-		defer tx.Rollback()
-		status, body, replay, err := reserveIdempotency(r.Context(), tx, org, key, hash)
-		if err != nil {
-			idempotencyFailure(w, r, err)
-			return
-		}
-		if replay {
-			writeRawJSON(w, status, body)
-			return
-		}
-		for _, date := range dates {
-			var closed bool
-			if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM close_periods WHERE organization_id=$1 AND status='closed' AND period_start <= $2::date AND period_end > $2::date)`, org, date).Scan(&closed); err != nil {
-				writeJSON(w, 500, problem{Error: "closed-period check failed"})
-				return
-			}
-			if closed {
-				writeJSON(w, 409, problem{Error: "statement contains activity in a closed period; an owner or admin must reopen it first"})
-				return
-			}
-		}
-		if in.Source == "" {
-			in.Source = "sandbox-json"
-		}
-		id := "imp_" + newID()
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO reconciliation_imports(id,organization_id,status,source_name,line_count) VALUES($1,$2,'matching',$3,$4)`, id, org, in.Source, len(in.Lines)); err != nil {
-			writeJSON(w, 500, problem{Error: "reconciliation import could not be created"})
-			return
-		}
-		matched, exceptions := 0, 0
-		for i, line := range in.Lines {
-			var duplicateOf sql.NullInt64
-			err = tx.QueryRowContext(r.Context(), `SELECT l.id FROM reconciliation_lines l JOIN reconciliation_imports ri ON ri.id=l.import_id WHERE ri.organization_id=$1 AND l.organization_id=$1 AND l.external_reference=$2 AND l.amount_minor=$3 AND l.currency=upper($4) AND l.transaction_date::date=$5::date ORDER BY l.id LIMIT 1`, org, strings.TrimSpace(line.Reference), line.Amount, line.Currency, dates[i]).Scan(&duplicateOf)
-			if err != nil && err != sql.ErrNoRows {
-				writeJSON(w, 500, problem{Error: "duplicate statement lookup failed"})
-				return
-			}
-			if err == sql.ErrNoRows {
-				duplicateOf.Valid = false
-			}
-			matchStatus := "unmatched"
-			var collectionID sql.NullString
-			var matchedRequestID, matchedPayoutID sql.NullString
-			var reason string
-			var linked any
-			if duplicateOf.Valid {
-				matchStatus = "duplicate"
-				exceptions++
-				reason = fmt.Sprintf("Duplicate of previously imported statement line %d", duplicateOf.Int64)
-			} else {
-				var exact bool
-				err = tx.QueryRowContext(r.Context(), `SELECT id,(amount_minor=$3+$4 AND currency=upper($5)) FROM collections WHERE organization_id=$1 AND reference=$2 AND status='succeeded' ORDER BY created_at DESC LIMIT 1`, org, line.Reference, line.Amount, line.Fee, line.Currency).Scan(&collectionID, &exact)
-				if err != nil && err != sql.ErrNoRows {
-					writeJSON(w, 500, problem{Error: "reconciliation match lookup failed"})
-					return
-				}
-				if err == nil && collectionID.Valid {
-					linked = collectionID.String
-					if exact {
-						matchStatus = "matched"
-						matched++
-					} else {
-						matchStatus = "exception"
-						exceptions++
-						reason = "Reference matches a succeeded collection, but amount or currency differs"
-					}
-				} else {
-					var requestID, requestStatus, requestCurrency string
-					var requestAmount int64
-					err = tx.QueryRowContext(r.Context(), `SELECT id,amount_minor,currency,status FROM bank_payment_requests WHERE organization_id=$1 AND reference=$2 ORDER BY created_at DESC LIMIT 1`, org, strings.TrimSpace(line.Reference)).Scan(&requestID, &requestAmount, &requestCurrency, &requestStatus)
-					if err != nil && err != sql.ErrNoRows {
-						writeJSON(w, 500, problem{Error: "payment-request match lookup failed"})
-						return
-					}
-					if err == nil {
-						if requestAmount == line.Amount+line.Fee && strings.EqualFold(strings.TrimSpace(requestCurrency), strings.TrimSpace(line.Currency)) && requestStatus == "open" {
-							matchStatus = "matched"
-							matched++
-							matchedRequestID = sql.NullString{String: requestID, Valid: true}
-							_, err = tx.ExecContext(r.Context(), `UPDATE bank_payment_requests SET status='statement_confirmed' WHERE id=$1 AND organization_id=$2 AND status='open'`, requestID, org)
-							if err != nil {
-								writeJSON(w, 500, problem{Error: "payment request settlement status could not be updated"})
-								return
-							}
-						} else {
-							matchStatus = "exception"
-							exceptions++
-							reason = "Reference matches a payment request, but amount, currency, or request status differs"
-						}
-					} else {
-						var payoutID, payoutCurrency, payoutStatus string
-						var payoutAmount int64
-						err = tx.QueryRowContext(r.Context(), `SELECT id,amount_minor,currency,status FROM bank_payout_instructions WHERE organization_id=$1 AND reference=$2 ORDER BY created_at DESC LIMIT 1`, org, strings.TrimSpace(line.Reference)).Scan(&payoutID, &payoutAmount, &payoutCurrency, &payoutStatus)
-						if err != nil && err != sql.ErrNoRows {
-							writeJSON(w, 500, problem{Error: "payout match lookup failed"})
-							return
-						}
-						if err == nil {
-							submittable := payoutStatus == "exported_for_manual_entry" || payoutStatus == "submitted_to_bank"
-							if payoutAmount == line.Amount && strings.EqualFold(strings.TrimSpace(payoutCurrency), strings.TrimSpace(line.Currency)) && submittable {
-								matchStatus = "matched"
-								matched++
-								matchedPayoutID = sql.NullString{String: payoutID, Valid: true}
-								_, err = tx.ExecContext(r.Context(), `UPDATE bank_payout_instructions SET status='statement_confirmed' WHERE id=$1 AND organization_id=$2 AND status<>'cancelled'`, payoutID, org)
-								if err != nil {
-									writeJSON(w, 500, problem{Error: "payout settlement status could not be updated"})
-									return
-								}
-							} else {
-								matchStatus = "exception"
-								exceptions++
-								reason = "Reference matches a payout instruction, but amount, currency, or payout status differs"
-							}
-						} else {
-							exceptions++
-						}
-					}
-				}
-			}
-			if collectionID.Valid {
-				linked = collectionID.String
-			}
-			var lineID int64
-			err = tx.QueryRowContext(r.Context(), `INSERT INTO reconciliation_lines(import_id,external_reference,amount_minor,currency,transaction_date,match_status,matched_collection_id,organization_id,provider_fee_minor,matched_request_id,matched_payout_id,duplicate_of,suggestion_reason) VALUES($1,$2,$3,upper($4),$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, id, strings.TrimSpace(line.Reference), line.Amount, line.Currency, dates[i], matchStatus, linked, org, line.Fee, nullableNull(matchedRequestID), nullableNull(matchedPayoutID), nullableInt64(duplicateOf), reason).Scan(&lineID)
-			if err != nil {
-				writeJSON(w, 500, problem{Error: "reconciliation line could not be stored"})
-				return
-			}
-			p := principalFrom(r)
-			if matchedRequestID.Valid {
-				_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'bank_request.statement_confirmed','bank_payment_request',$4,jsonb_build_object('import_id',$5::text,'line_id',$6::bigint))`, "aud_"+newID(), org, nullable(p.userID), matchedRequestID.String, id, lineID)
-			} else if matchedPayoutID.Valid {
-				_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'bank_payout.statement_confirmed','bank_payout',$4,jsonb_build_object('import_id',$5::text,'line_id',$6::bigint))`, "aud_"+newID(), org, nullable(p.userID), matchedPayoutID.String, id, lineID)
-			}
-			if err != nil {
-				writeJSON(w, 500, problem{Error: "bank settlement decision could not be audited"})
-				return
-			}
-			if matchStatus == "unmatched" {
-				exceptions++
-			}
-		}
-		importStatus := "reconciled"
-		if exceptions > 0 {
-			importStatus = "needs_review"
-		}
-		if _, err = tx.ExecContext(r.Context(), `UPDATE reconciliation_imports SET status=$3 WHERE id=$1 AND organization_id=$2`, id, org, importStatus); err != nil {
-			writeJSON(w, 500, problem{Error: "reconciliation status could not be updated"})
-			return
-		}
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO outbox_events(id,organization_id,aggregate_type,aggregate_id,event_type,payload) VALUES($1,$2,'reconciliation_import',$3,'reconciliation.import.completed',jsonb_build_object('import_id',$3::text,'line_count',$4::integer,'matched_count',$5::integer,'exception_count',$6::integer,'status',$7::text))`, "evt_"+newID(), org, id, len(in.Lines), matched, exceptions, importStatus); err != nil {
-			writeJSON(w, 500, problem{Error: "reconciliation event could not be stored"})
-			return
-		}
-		result := map[string]any{"id": id, "status": importStatus, "source_name": in.Source, "line_count": len(in.Lines), "matched_count": matched, "exception_count": exceptions, "mode": "sandbox"}
-		if err = storeIdempotency(r.Context(), tx, org, key, 201, result); err != nil {
-			idempotencyFailure(w, r, err)
-			return
-		}
-		if err = tx.Commit(); err != nil {
-			writeJSON(w, 409, problem{Error: "reconciliation import conflict"})
-			return
-		}
-		writeJSON(w, 201, result)
+		a.createReconciliationImport(w, r, org)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "imports" && r.Method == http.MethodGet {
@@ -403,6 +198,15 @@ func (a *App) resolveReconciliationLine(w http.ResponseWriter, r *http.Request, 
 		}
 		if collectionStatus != "succeeded" || strings.TrimSpace(collectionCurrency) != strings.TrimSpace(currency) || collectionAmount != amount+fee {
 			writeJSON(w, 409, problem{Error: "collection must be succeeded and match the statement gross amount and currency"})
+			return
+		}
+		var reconciled bool
+		if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM reconciliation_lines WHERE organization_id=$1 AND matched_collection_id=$2 AND match_status='matched')`, org, in.CollectionID).Scan(&reconciled); err != nil {
+			writeJSON(w, 500, problem{Error: "collection reconciliation check failed"})
+			return
+		}
+		if reconciled {
+			writeJSON(w, 409, problem{Error: "collection is already reconciled by another statement line"})
 			return
 		}
 		collection = in.CollectionID

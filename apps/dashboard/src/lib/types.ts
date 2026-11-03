@@ -8,8 +8,8 @@ export type Role =
 
 export type WorkspaceType = "personal" | "business";
 
+/** Signed-in user profile. The bearer token stays in an httpOnly cookie. */
 export type Session = {
-  access_token: string;
   user_id: string;
   full_name?: string;
   organization_id: string;
@@ -22,6 +22,9 @@ export type Principal = {
   user_id: string;
   role: Role;
   credential_type: string;
+  full_name?: string;
+  email?: string;
+  expires_at?: string;
 };
 
 export type Organization = {

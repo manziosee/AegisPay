@@ -7,6 +7,8 @@ info:
     the smallest currency unit. Internal balances are ledger records and are not
     deposits or a claim on funds held in a bank. External payment execution is disabled.
 servers:
+  - url: https://aegispay.fly.dev
+    description: Hosted sandbox
   - url: http://localhost:{apiPort}
     description: Local sandbox
     variables:
@@ -28,6 +30,19 @@ paths:
       summary: Readiness
       responses:
         '200': {description: Database is reachable}
+        '503': {description: Database or Redis is unavailable}
+  /docs:
+    get:
+      security: []
+      summary: Interactive API reference (Swagger UI)
+      responses:
+        '200': {description: HTML page}
+  /openapi.yaml:
+    get:
+      security: []
+      summary: This OpenAPI document
+      responses:
+        '200': {description: OpenAPI 3.0 YAML}
         '503': {description: Dependency unavailable}
   /v1/auth/register:
     post:
@@ -55,10 +70,12 @@ paths:
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [email, password], properties: {email: {type: string, format: email}, password: {type: string}, organization_id: {type: string}}}}}
-      responses: {'200': {description: Bearer session}, '401': {description: Invalid credentials}}
+      description: Limited per client IP and per email address (10 attempts per 15 minutes), so guesses cannot be spread across addresses.
+      responses: {'200': {description: Bearer session}, '401': {description: Invalid credentials}, '429': {description: Too many attempts}}
   /v1/auth/me:
     get:
       summary: Inspect current organization and role
+      description: For user sessions the response also includes full_name, email and the session expires_at.
       responses: {'200': {description: Authenticated principal}}
   /v1/auth/logout:
     post:
@@ -67,7 +84,7 @@ paths:
   /v1/auth/mfa/enroll:
     post:
       summary: Begin authenticator-app MFA enrollment
-      description: Returns a one-time TOTP secret and provisioning URI. WEBHOOK_ENCRYPTION_KEY must be configured; secrets are encrypted at rest.
+      description: Returns a one-time TOTP secret and provisioning URI. ENCRYPTION_KEYS (or the legacy WEBHOOK_ENCRYPTION_KEY) must be configured; secrets are encrypted at rest.
       responses: {'201': {description: MFA setup secret shown once}, '409': {description: MFA already enabled}}
   /v1/auth/mfa/verify:
     post:
@@ -90,36 +107,37 @@ paths:
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [mfa_token, code], properties: {mfa_token: {type: string}, code: {type: string, pattern: '^[0-9]{6}$'}}}}}
-      responses: {'200': {description: Authenticated session}, '400': {description: Invalid code format}, '401': {description: Invalid or expired challenge}}
+      responses: {'200': {description: Authenticated session}, '400': {description: Invalid code format}, '401': {description: Invalid or expired challenge}, '429': {description: Five codes were tried for this challenge; sign in again}}
   /v1/members:
     get:
       summary: List organization members
       responses: {'200': {description: Members}}
     post:
-      summary: Add an already-registered user to organization
-      requestBody:
-        required: true
-        content: {application/json: {schema: {type: object, required: [email, role], properties: {email: {type: string, format: email}, role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}}}}}
-      responses: {'201': {description: Member added}, '404': {description: User must register first}}
+      summary: Removed; members join through invitations
+      description: Adding a registered user directly joined them without consent and revealed which emails are registered. Use POST /v1/invitations.
+      deprecated: true
+      responses: {'410': {description: Use POST /v1/invitations}}
   /v1/members/{id}:
     patch:
       summary: Change a member role or active status
+      description: Only an owner can change an owner or admin membership or grant the admin role.
       parameters: [{$ref: '#/components/parameters/Id'}]
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, properties: {role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}, status: {type: string, enum: [active, suspended]}}}}}
-      responses: {'200': {description: Membership updated}, '409': {description: Last active owner cannot be demoted or suspended}}
+      responses: {'200': {description: Membership updated}, '403': {description: Owner authority required}, '409': {description: Last active owner cannot be demoted or suspended}}
     delete:
       summary: Suspend a member
+      description: Only an owner can suspend an owner or admin.
       parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'200': {description: Membership suspended}, '409': {description: Last active owner cannot be removed}}
+      responses: {'200': {description: Membership suspended}, '403': {description: Owner authority required}, '409': {description: Last active owner cannot be removed}}
   /v1/invitations:
     get:
       summary: List organization invitations
       responses: {'200': {description: Invitation metadata without invite tokens}}
     post:
       summary: Invite a registered or new user to an organization
-      description: Returns a one-time invite token for delivery over a trusted channel. Email delivery is not configured by this service. Invitations expire after seven days.
+      description: Returns a one-time invite token for delivery over a trusted channel. Email delivery is not configured by this service. Invitations expire after seven days. Only an owner can invite an admin.
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [email, role], properties: {email: {type: string, format: email}, role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}}}}}
@@ -297,12 +315,19 @@ paths:
       summary: Approve a transfer pending review
       description: Requires a different authenticated user from the initiator and a role with transfer approval permission.
       parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'200': {description: Transfer approved and ledger posted}, '403': {description: Separation of duties denied}}
+      requestBody:
+        required: false
+        content: {application/json: {schema: {type: object, properties: {note: {type: string, maxLength: 500}}}}}
+      responses: {'200': {description: Transfer approved and ledger posted}, '403': {description: Separation of duties denied}, '409': {description: Not pending, or the accounting period is closed}}
   /v1/transfers/{id}/reject:
     post:
       summary: Reject a transfer pending review
+      description: A reason is required and is stored with the decision and in the audit log.
       parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'200': {description: Transfer rejected}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'200': {description: Transfer rejected}, '400': {description: Note missing or too long}}
   /v1/transfers/{id}:
     get:
       summary: Retrieve transfer

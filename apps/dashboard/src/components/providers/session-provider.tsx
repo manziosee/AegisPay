@@ -14,7 +14,8 @@ import { toast } from "sonner";
 import { api, setUnauthorizedHandler } from "@/lib/api";
 import type { Principal, Role, Session } from "@/lib/types";
 
-const STORAGE_KEY = "aegispay.session";
+// Earlier builds kept the bearer token here; it is removed on load.
+const LEGACY_STORAGE_KEY = "aegispay.session";
 
 type AuthStatus = "restoring" | "anonymous" | "authenticated";
 
@@ -45,6 +46,16 @@ type SessionContextValue = {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+function sessionFromPrincipal(actor: Principal): Session {
+  return {
+    user_id: actor.user_id,
+    full_name: actor.full_name,
+    organization_id: actor.organization_id,
+    role: actor.role,
+    expires_at: actor.expires_at ?? ""
+  };
+}
+
 function principalFromSession(session: Session): Principal {
   return {
     organization_id: session.organization_id,
@@ -63,10 +74,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const persist = useCallback((value: Session, fallbackName?: string) => {
     const normalized: Session = {
-      ...value,
+      user_id: value.user_id,
+      organization_id: value.organization_id,
+      role: value.role,
+      expires_at: value.expires_at,
       full_name: value.full_name || fallbackName || undefined
     };
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
     setSession(normalized);
     setPrincipal(principalFromSession(normalized));
     setStatus("authenticated");
@@ -76,21 +89,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     const restore = async () => {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        if (active) setStatus("anonymous");
-        return;
-      }
+      sessionStorage.removeItem(LEGACY_STORAGE_KEY);
       try {
-        const saved = JSON.parse(raw) as Session;
-        if (!saved?.access_token) throw new Error("missing token");
-        const actor = await api<Principal>("/auth/me", saved.access_token);
+        // The httpOnly session cookie is sent automatically; a 401 here just
+        // means nobody is signed in.
+        const actor = await api<Principal>("/auth/me", { anonymous: true });
         if (!active) return;
-        setSession(saved);
+        setSession(sessionFromPrincipal(actor));
         setPrincipal(actor);
         setStatus("authenticated");
       } catch {
-        sessionStorage.removeItem(STORAGE_KEY);
         if (active) setStatus("anonymous");
       }
     };
@@ -104,7 +112,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setUnauthorizedHandler(() => {
       if (handlingUnauthorized.current) return;
       handlingUnauthorized.current = true;
-      sessionStorage.removeItem(STORAGE_KEY);
       setSession(null);
       setPrincipal(null);
       setStatus("anonymous");
@@ -124,8 +131,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     async (email: string, password: string): Promise<LoginResult> => {
       const result = await api<Session & { mfa_required?: boolean; mfa_token?: string }>(
         "/auth/login",
-        undefined,
-        { method: "POST", body: JSON.stringify({ email: email.trim(), password }) }
+        { method: "POST", anonymous: true, body: JSON.stringify({ email: email.trim(), password }) }
       );
       if (result.mfa_required && result.mfa_token) {
         return { mfaRequired: true, mfaToken: result.mfa_token };
@@ -138,8 +144,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(
     async (input: RegisterInput) => {
-      const result = await api<Session>("/auth/register", undefined, {
+      const result = await api<Session>("/auth/register", {
         method: "POST",
+        anonymous: true,
         body: JSON.stringify({
           full_name: input.full_name.trim(),
           email: input.email.trim(),
@@ -158,8 +165,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const verifyMfa = useCallback(
     async (mfaToken: string, code: string) => {
-      const result = await api<Session>("/auth/mfa/verify-login", undefined, {
+      const result = await api<Session>("/auth/mfa/verify-login", {
         method: "POST",
+        anonymous: true,
         body: JSON.stringify({ mfa_token: mfaToken, code })
       });
       persist(result);
@@ -169,18 +177,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    if (session) {
-      try {
-        await api("/auth/logout", session.access_token, { method: "POST" });
-      } catch {
-        // The local session must still be cleared if revocation fails.
-      }
+    try {
+      // The proxy clears the session cookie even if revocation fails upstream.
+      await api("/auth/logout", { method: "POST", anonymous: true });
+    } catch {
+      // The local state must still be cleared if revocation fails.
     }
-    sessionStorage.removeItem(STORAGE_KEY);
     setSession(null);
     setPrincipal(null);
     setStatus("anonymous");
-  }, [session]);
+  }, []);
 
   const value = useMemo<SessionContextValue>(
     () => ({
