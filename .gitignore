@@ -4,6 +4,12 @@
 *.dump
 *.sql.gz
 backups/
+
+apps/dashboard/node_modules/
+apps/dashboard/.next/
+apps/dashboard/tsconfig.tsbuildinfo
+apps/dashboard/playwright-report/
+apps/dashboard/test-results/
 .DS_Store
 
 backups/

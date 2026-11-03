@@ -74,6 +74,25 @@ services:
       retries: 10
       start_period: 10s
 
+  dashboard:
+    build:
+      context: ./apps/dashboard
+      args:
+        API_PROXY_TARGET: http://api:8080
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [data, egress]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
   fraud:
     build:
       context: ./backend/python/fraud

@@ -32,20 +32,21 @@ paths:
   /v1/auth/register:
     post:
       security: []
-      summary: Register a user and a new organization
+      summary: Register a user and a personal or business workspace
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [organization_name, full_name, email, password]
+              required: [full_name, email, password]
               properties:
-                organization_name: {type: string}
+                workspace_type: {type: string, enum: [personal, business], default: business}
+                organization_name: {type: string, description: Required for business workspaces; personal workspaces are named from full_name}
                 full_name: {type: string}
                 email: {type: string, format: email}
                 password: {type: string, minLength: 12, maxLength: 72}
-                country_code: {type: string, minLength: 2, maxLength: 2}
+                country_code: {type: string, minLength: 2, maxLength: 2, default: RW}
       responses: {'201': {description: Created owner and bearer session}, '409': {description: Email already exists}}
   /v1/auth/login:
     post:
@@ -63,6 +64,33 @@ paths:
     post:
       summary: Revoke current user session
       responses: {'200': {description: Session revoked}}
+  /v1/auth/mfa/enroll:
+    post:
+      summary: Begin authenticator-app MFA enrollment
+      description: Returns a one-time TOTP secret and provisioning URI. WEBHOOK_ENCRYPTION_KEY must be configured; secrets are encrypted at rest.
+      responses: {'201': {description: MFA setup secret shown once}, '409': {description: MFA already enabled}}
+  /v1/auth/mfa/verify:
+    post:
+      summary: Verify setup code and enable MFA
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [code], properties: {code: {type: string, pattern: '^[0-9]{6}$'}}}}}
+      responses: {'200': {description: MFA enabled}}
+  /v1/auth/mfa/disable:
+    post:
+      summary: Disable MFA after password and authenticator verification
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [code, password], properties: {code: {type: string, pattern: '^[0-9]{6}$'}, password: {type: string}}}}}
+      responses: {'200': {description: MFA disabled}}
+  /v1/auth/mfa/verify-login:
+    post:
+      security: []
+      summary: Complete password login with an authenticator code
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [mfa_token, code], properties: {mfa_token: {type: string}, code: {type: string, pattern: '^[0-9]{6}$'}}}}}
+      responses: {'200': {description: Authenticated session}, '400': {description: Invalid code format}, '401': {description: Invalid or expired challenge}}
   /v1/members:
     get:
       summary: List organization members
@@ -85,6 +113,37 @@ paths:
       summary: Suspend a member
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: Membership suspended}, '409': {description: Last active owner cannot be removed}}
+  /v1/invitations:
+    get:
+      summary: List organization invitations
+      responses: {'200': {description: Invitation metadata without invite tokens}}
+    post:
+      summary: Invite a registered or new user to an organization
+      description: Returns a one-time invite token for delivery over a trusted channel. Email delivery is not configured by this service. Invitations expire after seven days.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [email, role], properties: {email: {type: string, format: email}, role: {type: string, enum: [admin, finance_operator, fraud_analyst, developer, auditor]}}}}}
+      responses: {'201': {description: Invitation created; token shown once}}
+  /v1/invitations/{id}/accept:
+    post:
+      summary: Accept an invitation using the invited account
+      description: Sign in with the invited email, set X-Organization-ID to the invitation organization, then submit the one-time invite token.
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: X-Organization-ID, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [invite_token], properties: {invite_token: {type: string}}}}}
+      responses: {'200': {description: Membership activated}, '404': {description: Invalid, expired, or previously used invitation}}
+  /v1/transaction-policies:
+    get:
+      summary: List organization transaction limits by currency
+      responses: {'200': {description: Configured policy limits}}
+    put:
+      summary: Set or update transaction limits for a currency
+      description: Omitted fields retain their current values. Limits apply to sandbox collection creation and internal transfers; approval_threshold_minor and required_approvals control maker-checker review for internal transfers and bank payout registers.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [currency], properties: {currency: {type: string, minLength: 3, maxLength: 3}, max_single_minor: {type: integer, minimum: 1}, daily_collection_minor: {type: integer, minimum: 1}, daily_transfer_minor: {type: integer, minimum: 1}, approval_threshold_minor: {type: integer, minimum: 1}, required_approvals: {type: integer, minimum: 1, maximum: 3}}}}}
+      responses: {'200': {description: Policy saved}, '400': {description: Invalid limit}}
   /v1/api-keys:
     get:
       summary: List organization API keys (secrets never returned)
@@ -93,13 +152,18 @@ paths:
       summary: Create sandbox API key (secret shown once)
       requestBody:
         required: true
-        content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string}, environment: {type: string, enum: [sandbox]}, scopes: {type: array, items: {type: string}}}}}}
+        content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string}, environment: {type: string, enum: [sandbox]}, scopes: {type: array, items: {type: string}}, expires_at: {type: string, format: date-time, description: Optional expiration within five years}}}}}
       responses: {'201': {description: Key created and secret returned once}}
   /v1/api-keys/{id}/revoke:
     post:
       summary: Revoke an API key
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: Revoked}}
+  /v1/api-keys/{id}/rotate:
+    post:
+      summary: Revoke a key and issue a replacement with the same scopes and expiry
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'201': {description: Replacement secret shown once}}
   /v1/organizations:
     get:
       summary: Get configured organization
@@ -268,18 +332,160 @@ paths:
         content: {application/json: {schema: {type: object, required: [note, outcome], properties: {note: {type: string}, outcome: {type: string, enum: [confirmed, false_positive]}}}}}
       responses: {'200': {description: Case resolved and audited}}
   /v1/reconciliation/imports:
+    get:
+      summary: List organization reconciliation imports
+      description: Returns recent imports with matched and unresolved exception counts for the business dashboard.
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [matching, needs_review, reconciled]}}
+        - {$ref: '#/components/parameters/ReportLimit'}
+        - {$ref: '#/components/parameters/ReportCursor'}
+      responses: {'200': {description: Cursor-paginated imports with exception counts}}
     post:
-      summary: Import and match statement lines in sandbox JSON format
+      summary: Import and match provider settlement lines in sandbox JSON format
+      description: Statement amount is the net settlement amount. Add provider_fee to compare net amount plus fee with the original successful collection amount; provider_fee defaults to zero.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
-        content: {application/json: {schema: {type: object, required: [lines], properties: {source_name: {type: string}, lines: {type: array, minItems: 1, maxItems: 10000, items: {type: object, required: [external_reference, amount, currency], properties: {external_reference: {type: string}, amount: {type: integer}, currency: {type: string, minLength: 3, maxLength: 3}, transaction_date: {type: string, format: date-time}}}}}}}}
+        content: {application/json: {schema: {type: object, required: [lines], properties: {source_name: {type: string}, lines: {type: array, minItems: 1, maxItems: 10000, items: {type: object, required: [external_reference, amount, currency], properties: {external_reference: {type: string}, amount: {type: integer, minimum: 1, description: Net settlement in minor currency units}, provider_fee: {type: integer, minimum: 0, default: 0, description: Provider fee in minor currency units}, currency: {type: string, minLength: 3, maxLength: 3}, transaction_date: {type: string, format: date-time}}}}}}}}
       responses: {'201': {description: Import created with matched_count, exception_count, and reconciled or needs_review status}}
+  /v1/reconciliation/imports/csv:
+    post:
+      summary: Import a bank statement CSV
+      description: Accepts reference, amount or amount_minor, currency, and optional date/provider_fee columns. Exact reference, amount, and currency matches provide statement evidence. Duplicate lines are flagged; imports in a closed period are rejected.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_name, csv]
+              properties:
+                source_name: {type: string}
+                csv: {type: string}
+      responses: {'201': {description: Imported with match and exception counts}, '400': {$ref: '#/components/responses/BadRequest'}, '409': {description: Statement date falls in a closed period}}
   /v1/reconciliation/imports/{id}:
     get:
-      summary: Retrieve imported statement lines and match results
+      summary: Retrieve imported statement lines and match results, including line IDs for resolution
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: Import with lines}, '404': {description: Import not found}}
+  /v1/reconciliation/imports/{id}/lines/{line_id}/resolve:
+    post:
+      summary: Resolve an unmatched or exceptional statement line
+      description: Match to a succeeded same-currency collection with the same gross amount, or explicitly ignore the line. A note is required; the decision is audited and emitted as a webhook event.
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: line_id, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [resolution, note], properties: {resolution: {type: string, enum: [match, ignore]}, collection_id: {type: string}, note: {type: string, minLength: 1}}}}}
+      responses: {'200': {description: Line resolved}, '409': {description: Collection does not match or line was already resolved}}
+  /v1/bank-operations/health:
+    get:
+      summary: Get organization control-health counters
+      description: Includes reconciliation exceptions, pending transfer and payout approvals, open periods, and payouts awaiting statement evidence. Settlement mode is bank-file-only.
+      responses: {'200': {description: Control-health counters}}
+  /v1/bank-operations/requests:
+    get:
+      summary: List bank-transfer payment requests
+      responses: {'200': {description: Payment requests and their statement-confirmed status}}
+    post:
+      summary: Create a payment request
+      description: Creates a reference for a payer to use with the business's own bank instructions. Creating a request does not receive money.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [amount, currency], properties: {amount: {type: integer, minimum: 1, description: Amount in minor currency units}, currency: {type: string, minLength: 3, maxLength: 3}, description: {type: string, maxLength: 500}, due_date: {type: string, format: date}}}}}
+      responses: {'201': {description: Request created with a unique reference and not_received settlement status}}
+  /v1/bank-operations/payouts:
+    get:
+      summary: List payout register entries
+      responses: {'200': {description: Payouts with status and approval counts}}
+    post:
+      summary: Create a payout register entry
+      description: Higher-value entries await the configured number of reviewers. This records a workflow only and never submits a bank payment.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [beneficiary_name, amount, currency], properties: {beneficiary_name: {type: string, maxLength: 160}, amount: {type: integer, minimum: 1, description: Amount in minor currency units}, currency: {type: string, minLength: 3, maxLength: 3}, description: {type: string, maxLength: 500}}}}}
+      responses: {'201': {description: Payout register entry created; status is pending_approval or prepared}}
+  /v1/bank-operations/payouts/export:
+    post:
+      summary: Export approved payout entries as a CSV register
+      description: Exports prepared entries for manual entry into the organization's bank portal. This CSV is not an executable payment file and does not indicate submission or settlement.
+      responses: {'200': {description: CSV register with X-Settlement-Status not-submitted-to-bank}, '409': {description: No prepared payouts to export}}
+  /v1/bank-operations/payouts/{id}/approve:
+    post:
+      summary: Record a payout approval
+      description: Requires an owner/admin or an active delegation, a reviewer other than the creator, a unique reviewer vote, and a decision note. The payout becomes exportable only after its configured approval count is met.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'200': {description: Approval recorded and remaining approval count returned}, '403': {description: Reviewer is unauthorized or is the creator}, '409': {description: Payout is not pending or reviewer already voted}}
+  /v1/bank-operations/payouts/{id}/reject:
+    post:
+      summary: Reject a payout register entry
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'200': {description: Payout rejected and audited}, '403': {description: Reviewer is unauthorized or is the creator}, '409': {description: Payout is not pending or reviewer already voted}}
+  /v1/bank-operations/payouts/{id}/submit:
+    post:
+      summary: Record that a payout was entered in the organization's bank portal
+      description: This is a user attestation only. It does not submit a payment or confirm settlement; only an imported matching bank-statement line can confirm settlement.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'200': {description: Recorded as submitted_to_bank and awaiting statement evidence}, '404': {description: Payout is not in the exported state}}
+  /v1/bank-operations/periods:
+    get:
+      summary: List close periods
+      responses: {'200': {description: Periods and recorded close decisions}}
+    post:
+      summary: Create a period checklist
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [period_start, period_end], properties: {period_start: {type: string, format: date}, period_end: {type: string, format: date, description: Exclusive end date}}}}}
+      responses: {'201': {description: Open period checklist created}, '409': {description: Period overlaps an existing period}}
+  /v1/bank-operations/periods/{id}/{action}:
+    post:
+      summary: Close or reopen a finance period
+      description: Only owners/admins can change period status. Closing is blocked by unresolved reconciliation exceptions or pending transfer/payout approvals. Reopening requires a note.
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+        - {name: action, in: path, required: true, schema: {type: string, enum: [close, reopen]}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'200': {description: Period status changed and decision audited}, '409': {description: Period contains unresolved controls or has the wrong current status}}
+  /v1/bank-operations/delegations:
+    get:
+      summary: List active reviewer delegations
+      responses: {'200': {description: Time-limited approval delegations}}
+    post:
+      summary: Delegate approval authority to a finance operator
+      description: Owners/admins may delegate to an active finance_operator in the same organization for up to 30 days.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [delegate_email, expires_at, note], properties: {delegate_email: {type: string, format: email}, expires_at: {type: string, format: date-time}, note: {type: string, minLength: 1, maxLength: 500}}}}}
+      responses: {'201': {description: Delegation created}, '404': {description: Delegate is not an active finance operator in this organization}}
+  /v1/bank-operations/delegations/{id}/revoke:
+    post:
+      summary: Revoke an approval delegation
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Delegation revoked}}
+  /v1/bank-operations/scenarios:
+    get:
+      summary: List finance-scenario simulation history
+      description: Simulation history is isolated from ledger activity and never moves funds.
+      responses: {'200': {description: Recent safe simulation runs}}
+  /v1/bank-operations/scenarios/simulate:
+    post:
+      summary: Run a finance control simulation
+      description: Runs a replayable duplicate-line, mismatched-total, or suspicious-transfer exercise without changing the ledger or moving funds.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [scenario_type], properties: {scenario_type: {type: string, enum: [duplicate_statement_lines, mismatched_totals, suspicious_transfer]}}}}}
+      responses: {'201': {description: Simulation result and explicit no-ledger-change/no-funds-moved flags}}
   /v1/webhook-endpoints:
     get:
       summary: List webhook endpoint metadata
@@ -299,11 +505,40 @@ paths:
   /v1/webhook-deliveries:
     get:
       summary: List webhook delivery attempts
+      parameters: [{$ref: '#/components/parameters/ReportLimit'}, {$ref: '#/components/parameters/ReportCursor'}]
       responses: {'200': {description: Delivery history}}
+  /v1/webhook-deliveries/{id}/retry:
+    post:
+      summary: Queue a failed webhook delivery for another attempt
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'202': {description: Delivery queued}, '404': {description: Failed delivery or active endpoint not found}}
+  /v1/audit-logs:
+    get:
+      summary: Search organization audit events
+      parameters:
+        - {name: action, in: query, schema: {type: string}}
+        - {name: resource_type, in: query, schema: {type: string}}
+        - {name: since, in: query, schema: {type: string, format: date-time}}
+        - {name: until, in: query, schema: {type: string, format: date-time}}
+        - {$ref: '#/components/parameters/ReportLimit'}
+        - {$ref: '#/components/parameters/ReportCursor'}
+      responses: {'200': {description: Cursor-paginated audit events}}
   /v1/reports/transactions:
     get:
-      summary: Transaction report scaffold
-      responses: {'200': {description: Empty sandbox report}}
+      summary: Search and export organization transaction activity
+      description: Returns cursor-paginated collections, internal transfers, and refunds, plus totals grouped by type, status, and currency for the full selected date range. Data is sandbox ledger activity and is not provider settlement data.
+      parameters:
+        - {name: from, in: query, schema: {type: string, format: date-time}, description: Inclusive RFC3339 start; defaults to 30 days ago}
+        - {name: to, in: query, schema: {type: string, format: date-time}, description: Exclusive RFC3339 end; defaults to now; range is limited to 366 days}
+        - {name: currency, in: query, schema: {type: string, minLength: 3, maxLength: 3}}
+        - {name: type, in: query, schema: {type: string, enum: [collection, transfer, refund]}}
+        - {name: status, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/ReportLimit'}
+        - {$ref: '#/components/parameters/ReportCursor'}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv]}, description: CSV exports the current page}
+      responses:
+        '200': {description: Paginated transaction activity and range totals (or CSV attachment)}
+        '400': {$ref: '#/components/responses/BadRequest'}
 components:
   securitySchemes:
     bearerAuth:
@@ -311,6 +546,14 @@ components:
       scheme: bearer
       bearerFormat: API key
   parameters:
+    ReportLimit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+    ReportCursor:
+      name: cursor
+      in: query
+      schema: {type: string}
     Id:
       name: id
       in: path

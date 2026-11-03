@@ -1,0 +1,14 @@
+[build]
+  base = "apps/dashboard"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NETLIFY = "true"
+  NODE_VERSION = "24"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[dev]
+  framework = "next"
