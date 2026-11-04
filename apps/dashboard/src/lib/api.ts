@@ -30,6 +30,36 @@ export type ApiInit = RequestInit & {
 
 // The session token is an httpOnly cookie managed by the same-origin proxy
 // (src/app/proxy/[...path]/route.ts); browser code never handles it.
+const NETWORK_MESSAGE =
+  "Your network connection changed or dropped before the request finished. Check your connection and try again.";
+
+/**
+ * Browsers abort requests when the device's network changes (Wi-Fi, VPN,
+ * mobile handover), reporting a bare TypeError. Requests that are safe to
+ * repeat (reads, and writes the API de-duplicates by Idempotency-Key) are
+ * retried once; others report a clear message instead of "Failed to fetch".
+ */
+async function fetchWithNetworkRetry(url: string, init: RequestInit): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const repeatable = method === "GET" || method === "HEAD" || new Headers(init.headers).has("Idempotency-Key");
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    if (repeatable) {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      try {
+        return await fetch(url, init);
+      } catch (retryError) {
+        if (!(retryError instanceof TypeError)) throw retryError;
+      }
+    }
+    const networkError = new Error(NETWORK_MESSAGE) as ApiError;
+    networkError.status = 0;
+    throw networkError;
+  }
+}
+
 async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
   const { anonymous, ...fetchInit } = init;
   const headers = new Headers(fetchInit.headers);
@@ -41,7 +71,7 @@ async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
     headers.set("X-Organization-ID", organizationId);
   }
 
-  const response = await fetch(`/proxy/v1${path}`, {
+  const response = await fetchWithNetworkRetry(`/proxy/v1${path}`, {
     ...fetchInit,
     headers,
     credentials: "same-origin",
@@ -72,7 +102,7 @@ export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blo
   if (organizationId && !headers.has("X-Organization-ID")) {
     headers.set("X-Organization-ID", organizationId);
   }
-  const response = await fetch(`/proxy/v1${path}`, {
+  const response = await fetchWithNetworkRetry(`/proxy/v1${path}`, {
     ...init,
     headers,
     credentials: "same-origin",

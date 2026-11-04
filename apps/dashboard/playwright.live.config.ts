@@ -7,6 +7,8 @@ export default defineConfig({
   testDir: "./e2e-live",
   reporter: "list",
   retries: 0,
+  // Real round trips to remote hosts take longer than mocked responses.
+  expect: { timeout: 15_000 },
   use: {
     baseURL,
     screenshot: "only-on-failure",
