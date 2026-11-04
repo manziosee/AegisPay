@@ -9,7 +9,8 @@ on:
         description: Dashboard URL to test
         default: https://aegispays.netlify.app
   schedule:
-    - cron: '17 6 * * *'
+    # Weekly, to stay well within the free Actions minutes of a private repo.
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read

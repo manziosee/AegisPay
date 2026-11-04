@@ -260,9 +260,9 @@ These deploy the whole stack on your own infrastructure; see [Run locally](#run-
 
 | Workflow | Runs on | What it does |
 | --- | --- | --- |
-| [`ci.yml`](.github/workflows/ci.yml) | Every push and pull request | Go formatting, `go vet`, unit tests and `govulncheck`; the API built and run against real PostgreSQL and Redis with [`scripts/api_integration_test.py`](scripts/api_integration_test.py) (every migration on an empty database, then risk rules, events, sessions and the audit chain); OpenAPI lint; dashboard typecheck, production build and Playwright tests |
+| [`ci.yml`](.github/workflows/ci.yml) | Pushes to `main` and pull requests | Go formatting, `go vet`, unit tests and `govulncheck`; the API built and run against real PostgreSQL and Redis with [`scripts/api_integration_test.py`](scripts/api_integration_test.py) (every migration on an empty database, then risk rules, events, sessions and the audit chain); OpenAPI lint; dashboard typecheck, production build and Playwright tests |
 | [`deploy-backend.yml`](.github/workflows/deploy-backend.yml) | Pushes to `main` that change `backend/go/**`, or a manual run | Runs the Go tests, deploys to Fly.io with `flyctl deploy --remote-only`, then waits until `/health/ready` and `/openapi.yaml` respond |
-| [`live-smoke.yml`](.github/workflows/live-smoke.yml) | Daily and on demand | Runs `npm run test:live` against the deployed dashboard and API |
+| [`live-smoke.yml`](.github/workflows/live-smoke.yml) | Weekly and on demand | Runs `npm run test:live` against the deployed dashboard and API |
 | [`container-security.yml`](.github/workflows/container-security.yml) | Every push and pull request | Builds the API and fraud images and scans them with Trivy for high and critical issues |
 | Netlify (Git integration) | Pushes to `main` | Builds and publishes the dashboard |
 | [Dependabot](.github/dependabot.yml) | Weekly | Update pull requests for Go modules, npm, pip, GitHub Actions and the API base image |
