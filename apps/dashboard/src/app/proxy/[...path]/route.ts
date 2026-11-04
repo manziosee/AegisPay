@@ -168,7 +168,16 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
-  const response = new NextResponse(upstream.body, { status: upstream.status, headers: responseHeaders });
+  // Buffer instead of streaming the upstream body: responses are small JSON or
+  // CSV, and a buffered body cannot be cut off mid-stream by the host runtime.
+  let payload: ArrayBuffer;
+  try {
+    payload = await upstream.arrayBuffer();
+  } catch (error) {
+    console.error("API proxy response read failed", { path: joined, message: String(error) });
+    return errorResponse(502, "The AegisPay API response was interrupted. Try again.");
+  }
+  const response = new NextResponse(upstream.status === 204 ? null : payload, { status: upstream.status, headers: responseHeaders });
   if (joined === "v1/auth/logout" || (upstream.status === 401 && token)) {
     clearSession(response, request);
   }
