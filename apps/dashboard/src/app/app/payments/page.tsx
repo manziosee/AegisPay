@@ -50,20 +50,27 @@ export default function PaymentsPage() {
   const load = useCallback(async () => {
     if (!session) return;
     setLoadError("");
-    try {
-      const [collectionPage, transferPage, accountPage, customerPage] = await Promise.all([
-        api<Page<Collection>>("/collections?limit=100"),
-        api<Page<Transfer>>("/transfers?limit=100"),
-        api<Page<Account>>("/accounts?limit=100"),
-        api<Page<Customer>>("/customers?limit=100").catch(() => ({ data: [] as Customer[] }))
-      ]);
-      setCollections(collectionPage.data);
-      setTransfers(transferPage.data);
-      setAccounts(accountPage.data.filter((account) => account.account_type !== "sandbox_clearing"));
-      setCustomers(customerPage.data);
-    } catch (error) {
-      setLoadError(errorMessage(error));
-    }
+    // Each list loads independently so one failed request does not empty the others.
+    const failures: string[] = [];
+    const safe = async <T,>(label: string, path: string): Promise<Page<T> | null> => {
+      try {
+        return await api<Page<T>>(path);
+      } catch (error) {
+        failures.push(`${label}: ${errorMessage(error)}`);
+        return null;
+      }
+    };
+    const [collectionPage, transferPage, accountPage, customerPage] = await Promise.all([
+      safe<Collection>("Collections", "/collections?limit=100"),
+      safe<Transfer>("Transfers", "/transfers?limit=100"),
+      safe<Account>("Accounts", "/accounts?limit=100"),
+      safe<Customer>("Customers", "/customers?limit=100")
+    ]);
+    if (collectionPage) setCollections(collectionPage.data);
+    if (transferPage) setTransfers(transferPage.data);
+    if (accountPage) setAccounts(accountPage.data.filter((account) => account.account_type !== "sandbox_clearing"));
+    if (customerPage) setCustomers(customerPage.data);
+    if (failures.length) setLoadError(`Some data could not be loaded. ${failures.join(" · ")}`);
   }, [session]);
 
   useEffect(() => {

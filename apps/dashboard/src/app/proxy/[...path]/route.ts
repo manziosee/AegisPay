@@ -9,7 +9,13 @@ import { NextResponse, type NextRequest } from "next/server";
  * state-changing calls because cookies are sent automatically.
  */
 
-const API_ORIGIN = (process.env.API_PROXY_TARGET ?? "http://localhost:18080").replace(/\/+$/, "");
+// Read per request so a misconfigured deployment reports the missing setting
+// instead of silently calling localhost.
+function apiOrigin(): string | null {
+  const configured = process.env.API_PROXY_TARGET?.trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  return process.env.NODE_ENV === "production" ? null : "http://localhost:18080";
+}
 // Shared with the API's TRUSTED_PROXY_SECRET so it accepts the client
 // address reported below for per-IP rate limits.
 const PROXY_SECRET = process.env.TRUSTED_PROXY_SECRET ?? "";
@@ -110,18 +116,27 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if (ip) headers.set("x-aegispay-client-ip", ip);
   }
 
-  const target = `${API_ORIGIN}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
-  let upstream: Response;
-  try {
-    upstream = await fetch(target, {
-      method: request.method,
-      headers,
-      body: unsafe ? await request.arrayBuffer() : undefined,
-      redirect: "manual",
-      cache: "no-store"
-    });
-  } catch {
-    return errorResponse(502, "The AegisPay API is unavailable.");
+  const origin = apiOrigin();
+  if (!origin) {
+    return errorResponse(503, "The dashboard is not connected to an API: set API_PROXY_TARGET on the hosting provider and redeploy.");
+  }
+  const target = `${origin}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
+  const body = unsafe ? await request.arrayBuffer() : undefined;
+  // A pooled keep-alive connection can be closed by the API's edge while
+  // idle, which fails the request before it reaches the API. Retry once when
+  // repeating is safe: reads, and writes the API de-duplicates by key.
+  const retryable = !unsafe || headers.has("idempotency-key");
+  let upstream: Response | undefined;
+  for (let attempt = 1; attempt <= (retryable ? 2 : 1) && !upstream; attempt++) {
+    try {
+      upstream = await fetch(target, { method: request.method, headers, body, redirect: "manual", cache: "no-store" });
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+      console.error(`API proxy attempt ${attempt} failed`, { path: joined, code: cause?.code, message: cause?.message ?? String(error) });
+    }
+  }
+  if (!upstream) {
+    return errorResponse(502, `The AegisPay API at ${new URL(origin).host} is unavailable.`);
   }
 
   if (SESSION_ISSUING.has(joined) && upstream.ok) {

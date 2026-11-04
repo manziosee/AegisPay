@@ -12,7 +12,10 @@ export function proxy(request: NextRequest) {
   const https = proto ? proto === "https" : request.nextUrl.protocol === "https:";
   const directives = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    // Same-origin scripts (Next.js chunks, and Netlify's team toolbar at
+    // /.netlify/scripts) are allowed; inline and third-party scripts need the
+    // per-request nonce.
+    `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ""}`,
     // Radix UI and Motion position elements with inline style attributes.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",
