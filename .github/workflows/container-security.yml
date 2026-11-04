@@ -1,11 +1,11 @@
 name: Container build and scan
 
-# Pull requests (including Dependabot's) are checked once; pushes only on
-# main, so branch pushes do not spend Actions minutes twice.
+# The image build and scan is the slowest job, so it runs on pull requests,
+# weekly (new CVEs appear without code changes), and on demand.
 on:
-  push:
-    branches: [main]
   pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
   workflow_dispatch:
 
 permissions:

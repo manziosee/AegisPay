@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Menu, Search } from "lucide-react";
+import { ChevronDown, Menu } from "lucide-react";
 import { Wordmark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
-import { Kbd } from "@/components/ui/kbd";
 import {
   Sheet,
   SheetContent,
@@ -13,7 +12,6 @@ import {
   SheetTitle,
   SheetTrigger
 } from "@/components/ui/sheet";
-import { useCommand } from "@/components/providers/command-provider";
 import { useSession } from "@/components/providers/session-provider";
 import { megaMenus } from "@/lib/marketing";
 import { cn } from "@/lib/utils";
@@ -22,7 +20,6 @@ export function SiteHeader() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const { setOpen: openCommand } = useCommand();
   const { status } = useSession();
 
   useEffect(() => {
@@ -125,16 +122,6 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 lg:ml-0">
-          <button
-            type="button"
-            onClick={() => openCommand(true)}
-            className="hidden h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-[12.5px] text-on-night-muted transition-colors hover:text-on-night sm:inline-flex"
-          >
-            <Search className="size-3.5" />
-            <span className="hidden xl:inline">Search</span>
-            <Kbd className="bg-white/8 text-on-night-muted">⌘K</Kbd>
-          </button>
-
           {status === "authenticated" ? (
             <Button
               asChild
