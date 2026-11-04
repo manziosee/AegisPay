@@ -30,6 +30,19 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 		return
 	}
 	switch parts[0] {
+	case "status":
+		if r.Method != http.MethodGet {
+			notFound(w, r)
+			return
+		}
+		var enabled bool
+		var enabledAt sql.NullTime
+		err := a.db.QueryRowContext(r.Context(), "SELECT enabled,enabled_at FROM user_mfa_factors WHERE user_id=$1", p.userID).Scan(&enabled, &enabledAt)
+		if err != nil && err != sql.ErrNoRows {
+			writeJSON(w, 500, problem{Error: "MFA status unavailable"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"enabled": enabled, "method": "totp", "enabled_at": nullableTime(enabledAt)})
 	case "enroll":
 		if r.Method != http.MethodPost {
 			notFound(w, r)

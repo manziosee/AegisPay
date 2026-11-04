@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Building2, Clock3, Fingerprint, LockKeyhole, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
+import { SecurityPanel } from "@/components/settings/security-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -32,7 +33,7 @@ type PolicyForm = {
 };
 
 const emptyForm: PolicyForm = {
-  currency: "RWF",
+  currency: "USD",
   max_single: "",
   daily_collection: "",
   daily_transfer: "",
@@ -305,6 +306,8 @@ export default function SettingsPage() {
         This workspace is sandbox-only. Limits govern simulated ledger operations and do not
         authorize or execute external payments.
       </p>
+
+      <SecurityPanel />
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="sm:max-w-[520px]">

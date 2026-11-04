@@ -11,11 +11,23 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { api, setUnauthorizedHandler } from "@/lib/api";
+import { api, setOrganizationId, setUnauthorizedHandler } from "@/lib/api";
 import type { Principal, Role, Session } from "@/lib/types";
 
 // Earlier builds kept the bearer token here; it is removed on load.
 const LEGACY_STORAGE_KEY = "aegispay.session";
+// Selected workspace (not a secret); sent as X-Organization-ID.
+const ORGANIZATION_KEY = "aegispay.organization";
+
+function rememberOrganization(id: string | null) {
+  setOrganizationId(id);
+  try {
+    if (id) localStorage.setItem(ORGANIZATION_KEY, id);
+    else localStorage.removeItem(ORGANIZATION_KEY);
+  } catch {
+    // Storage can be unavailable (private mode); the header still applies.
+  }
+}
 
 type AuthStatus = "restoring" | "anonymous" | "authenticated";
 
@@ -41,6 +53,7 @@ type SessionContextValue = {
   login: (email: string, password: string) => Promise<LoginResult>;
   register: (input: RegisterInput) => Promise<Session>;
   verifyMfa: (mfaToken: string, code: string) => Promise<Session>;
+  switchOrganization: (organizationId: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -80,6 +93,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       expires_at: value.expires_at,
       full_name: value.full_name || fallbackName || undefined
     };
+    rememberOrganization(normalized.organization_id);
     setSession(normalized);
     setPrincipal(principalFromSession(normalized));
     setStatus("authenticated");
@@ -90,11 +104,27 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     const restore = async () => {
       sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+      let stored: string | null = null;
       try {
-        // The httpOnly session cookie is sent automatically; a 401 here just
-        // means nobody is signed in.
-        const actor = await api<Principal>("/auth/me", { anonymous: true });
+        stored = localStorage.getItem(ORGANIZATION_KEY);
+      } catch {
+        stored = null;
+      }
+      setOrganizationId(stored);
+      // The httpOnly session cookie is sent automatically; a 401 here just
+      // means nobody is signed in (or the stored workspace is no longer ours).
+      const probe = () => api<Principal>("/auth/me", { anonymous: true });
+      try {
+        let actor: Principal;
+        try {
+          actor = await probe();
+        } catch (error) {
+          if (!stored) throw error;
+          rememberOrganization(null);
+          actor = await probe();
+        }
         if (!active) return;
+        rememberOrganization(actor.organization_id);
         setSession(sessionFromPrincipal(actor));
         setPrincipal(actor);
         setStatus("authenticated");
@@ -154,7 +184,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           workspace_type: input.workspace_type,
           organization_name:
             input.workspace_type === "business" ? input.organization_name.trim() : "",
-          country_code: input.country_code ?? "RW"
+          country_code: input.country_code
         })
       });
       persist(result, input.full_name);
@@ -176,6 +206,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [persist]
   );
 
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    const previous = session?.organization_id ?? null;
+    setOrganizationId(organizationId);
+    try {
+      const actor = await api<Principal>("/auth/me");
+      rememberOrganization(actor.organization_id);
+      setSession(sessionFromPrincipal(actor));
+      setPrincipal(actor);
+    } catch (error) {
+      setOrganizationId(previous);
+      throw error;
+    }
+  }, [session]);
+
   const logout = useCallback(async () => {
     try {
       // The proxy clears the session cookie even if revocation fails upstream.
@@ -183,6 +227,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // The local state must still be cleared if revocation fails.
     }
+    rememberOrganization(null);
     setSession(null);
     setPrincipal(null);
     setStatus("anonymous");
@@ -198,9 +243,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       login,
       register,
       verifyMfa,
+      switchOrganization,
       logout
     }),
-    [session, principal, status, login, register, verifyMfa, logout]
+    [session, principal, status, login, register, verifyMfa, switchOrganization, logout]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

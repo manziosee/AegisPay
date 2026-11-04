@@ -26,14 +26,14 @@ export default function MoneyPage() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [requestForm, setRequestForm] = useState({
     amount: "",
-    currency: "RWF",
+    currency: "USD",
     description: "",
     due_date: ""
   });
   const [payoutForm, setPayoutForm] = useState({
     beneficiary_name: "",
     amount: "",
-    currency: "RWF",
+    currency: "USD",
     description: ""
   });
   const [fileName, setFileName] = useState("");

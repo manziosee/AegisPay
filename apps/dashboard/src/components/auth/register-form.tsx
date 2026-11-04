@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { browserCountry } from "@/lib/locale";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleAlert, Eye, EyeOff } from "lucide-react";
@@ -20,6 +21,10 @@ export function RegisterForm({ next }: { next?: string }) {
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>("business");
   const [fullName, setFullName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
+  const [country, setCountry] = useState("");
+  useEffect(() => {
+    setCountry((current) => current || browserCountry());
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -49,7 +54,8 @@ export function RegisterForm({ next }: { next?: string }) {
         email,
         password,
         workspace_type: workspaceType,
-        organization_name: organizationName
+        organization_name: organizationName,
+        country_code: country.trim().toUpperCase()
       });
       router.replace(safeNext(next));
     } catch (submitError) {
@@ -114,6 +120,21 @@ export function RegisterForm({ next }: { next?: string }) {
           />
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label htmlFor="register-country">Country (two-letter code)</Label>
+        <Input
+          id="register-country"
+          value={country}
+          onChange={(event) => setCountry(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2))}
+          required
+          minLength={2}
+          maxLength={2}
+          placeholder="US"
+          autoComplete="country"
+          className="h-10 font-mono"
+        />
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="register-email">Work email</Label>

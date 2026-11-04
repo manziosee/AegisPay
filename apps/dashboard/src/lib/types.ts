@@ -327,3 +327,48 @@ export type WorkspaceData = {
   imports: ReconciliationImport[];
   policies: TransactionPolicy[];
 };
+
+export type WorkspaceMembership = {
+  id: string;
+  name: string;
+  workspace_type: WorkspaceType;
+  country_code: string;
+  role: Role;
+  joined_at: string;
+  current: boolean;
+};
+
+export type Customer = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  status: string;
+  created_at: string;
+};
+
+export type ApiKey = {
+  id: string;
+  name: string;
+  key_prefix: string;
+  environment: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+
+/** Returned once when a key is created or rotated. */
+export type ApiKeySecret = {
+  id: string;
+  name: string;
+  secret: string;
+  scopes: string[];
+  expires_at: string | null;
+  replaces?: string;
+};
+
+export type MfaStatus = { enabled: boolean; method: "totp"; enabled_at: string | null };
+
+export type MfaEnrollment = { status: string; secret: string; otpauth_uri: string };

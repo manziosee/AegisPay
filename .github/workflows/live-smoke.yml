@@ -1,0 +1,41 @@
+name: Live smoke test
+
+# Drives the deployed dashboard and API through the core workflows with a real
+# browser. Each run creates a fresh sandbox workspace.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Dashboard URL to test
+        default: https://aegispays.netlify.app
+  schedule:
+    - cron: '17 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Live smoke test
+        run: npm run test:live
+        env:
+          LIVE_BASE_URL: ${{ inputs.base_url || 'https://aegispays.netlify.app' }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: live-smoke-results
+          path: apps/dashboard/test-results
+          retention-days: 7

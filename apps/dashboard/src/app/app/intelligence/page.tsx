@@ -37,7 +37,7 @@ export default function IntelligencePage() {
   const { data, refresh } = useWorkspaceData();
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("RWF");
+  const [currency, setCurrency] = useState("USD");
   const [assessment, setAssessment] = useState<FraudAssessment | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState("");
@@ -55,7 +55,7 @@ export default function IntelligencePage() {
     const value = params.get("amount");
     const code = params.get("currency");
     if (ref) setReference(ref);
-    if (value) setAmount(minorToMajorInput(Number(value), params.get("currency") ?? "RWF"));
+    if (value) setAmount(minorToMajorInput(Number(value), params.get("currency") ?? "USD"));
     if (params.get("currency")) setCurrency(params.get("currency")!.toUpperCase());
     if (ref && value) {
       // A command-palette or transaction-detail handoff pre-fills the form only.

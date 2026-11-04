@@ -12,8 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/components/providers/session-provider";
-import { api, errorMessage } from "@/lib/api";
-import { formatDate, formatMinor } from "@/lib/format";
+import { api, apiIdempotent, errorMessage } from "@/lib/api";
+import { Field, FormDialog } from "@/components/ui-blocks/form-dialog";
+import { isAdmin } from "@/lib/roles";
+import { formatDate, formatMinor, majorToMinor, minorHint } from "@/lib/format";
 import type { Account, LedgerEntry, Page } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -36,14 +38,17 @@ async function withConcurrency<T, R>(
 }
 
 export default function AccountsPage() {
-  const { session } = useSession();
+  const { session, role } = useSession();
+  const canCredit = isAdmin(role ?? undefined);
+  const [crediting, setCrediting] = useState<Account | null>(null);
+  const [creditAmount, setCreditAmount] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [currency, setCurrency] = useState("RWF");
+  const [currency, setCurrency] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -259,7 +264,7 @@ export default function AccountsPage() {
                 <table className="w-full text-left">
                   <thead>
                     <tr className="border-b border-border bg-paper-muted/60">
-                      {["Currency", "Type", "Status", "Balance", "Created"].map((heading) => (
+                      {["Currency", "Type", "Status", "Balance", "Created", ""].map((heading) => (
                         <th
                           key={heading}
                           className="px-4 py-2 text-[10.5px] font-medium text-ink-400 first:pl-5 last:pr-5"
@@ -302,6 +307,22 @@ export default function AccountsPage() {
                         </td>
                         <td className="px-5 py-3 text-[11px] text-ink-400">
                           {formatDate(account.created_at)}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          {canCredit && account.account_type === "wallet" && account.status === "active" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setCreditAmount("");
+                                setCrediting(account);
+                              }}
+                            >
+                              Sandbox credit
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -380,6 +401,32 @@ export default function AccountsPage() {
           </Panel>
         </>
       )}
+
+      <FormDialog
+        open={crediting !== null}
+        onOpenChange={(next) => !next && setCrediting(null)}
+        title="Add a sandbox credit"
+        description="Posts a simulated credit from the sandbox clearing account so you can test transfers and payouts. No real money is received."
+        submitLabel="Post credit"
+        onSubmit={async () => {
+          if (!crediting) return;
+          const amount = majorToMinor(creditAmount, crediting.currency);
+          if (amount == null) throw new Error("Enter a positive amount.");
+          await apiIdempotent(`/accounts/${encodeURIComponent(crediting.id)}/sandbox-credit`, { amount });
+          toast.success(`${formatMinor(amount, crediting.currency)} credited.`);
+          await load();
+        }}
+      >
+        <Field
+          id="credit-amount"
+          label={`Amount (${crediting?.currency ?? ""})`}
+          inputMode="decimal"
+          required
+          value={creditAmount}
+          onChange={(event) => setCreditAmount(event.target.value)}
+          hint={minorHint(creditAmount, crediting?.currency ?? "USD")}
+        />
+      </FormDialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-[420px]">

@@ -51,7 +51,9 @@ func (a *App) rateLimit(next http.Handler) http.Handler {
 			return
 		}
 		identity := "ip:" + clientIP(r)
-		limit := 120
+		// A dashboard page issues several requests at once, so the per-credential
+		// default allows bursts of interactive use (10 requests per second).
+		limit := a.requestsPerMinute
 		window := time.Minute
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/auth/register"):

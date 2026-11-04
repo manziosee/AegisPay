@@ -28,9 +28,10 @@ import (
 var migrations embed.FS
 
 type App struct {
-	db            *sql.DB
-	redis         *redis.Client
-	orgID, apiKey string
+	db                *sql.DB
+	redis             *redis.Client
+	orgID, apiKey     string
+	requestsPerMinute int
 }
 type problem struct {
 	Error     string `json:"error"`
@@ -79,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer redisClient.Close()
-	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key}
+	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key, requestsPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 600, 10, 100000)}
 	if err = runMigrations(ctx, db); err != nil {
 		slog.Error("schema migration", "error", err)
 		os.Exit(1)
@@ -287,6 +288,10 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, out)
 			return
 		}
+		if len(seg) == 2 && seg[1] == "organizations" && r.Method == http.MethodGet {
+			a.userOrganizations(w, r)
+			return
+		}
 		if len(seg) == 2 && seg[1] == "logout" && r.Method == "POST" {
 			a.logout(w, r)
 			return
@@ -389,14 +394,15 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 	}
 	if len(s) == 1 && r.Method == http.MethodPost {
 		p := principalFrom(r)
-		if p.userID == "" || p.role != "owner" && p.role != "admin" {
-			writeJSON(w, 403, problem{Error: "organization creation requires an owner or admin user session", RequestID: requestID(r)})
+		if p.userID == "" || p.sessionID == "" {
+			writeJSON(w, 403, problem{Error: "organization creation requires a signed-in user session", RequestID: requestID(r)})
 			return
 		}
 		var in struct {
-			Name    string `json:"name"`
-			Slug    string `json:"slug"`
-			Country string `json:"country_code"`
+			Name          string `json:"name"`
+			Slug          string `json:"slug"`
+			Country       string `json:"country_code"`
+			WorkspaceType string `json:"workspace_type"`
 		}
 		if decode(r, &in) != nil || strings.TrimSpace(in.Name) == "" {
 			bad(w, r, "name is required")
@@ -404,11 +410,15 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 		}
 		in.Name = strings.TrimSpace(in.Name)
 		in.Country = strings.ToUpper(strings.TrimSpace(in.Country))
-		if in.Country == "" {
-			in.Country = "RW"
+		if len(in.Country) != 2 || !asciiCurrency(in.Country) {
+			bad(w, r, "country_code must be a two-letter ISO 3166 code")
+			return
 		}
-		if len(in.Country) != 2 {
-			bad(w, r, "country_code must be two letters")
+		if in.WorkspaceType == "" {
+			in.WorkspaceType = "business"
+		}
+		if in.WorkspaceType != "business" && in.WorkspaceType != "personal" {
+			bad(w, r, "workspace_type must be business or personal")
 			return
 		}
 		slug := makeSlug(in.Slug)
@@ -423,7 +433,7 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			return
 		}
 		defer tx.Rollback()
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO organizations(id,name,slug,country_code) VALUES($1,$2,$3,$4)`, orgID, in.Name, slug, in.Country); err == nil {
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO organizations(id,name,slug,country_code,workspace_type) VALUES($1,$2,$3,$4,$5)`, orgID, in.Name, slug, in.Country, in.WorkspaceType); err == nil {
 			_, err = tx.ExecContext(r.Context(), `INSERT INTO memberships(id,organization_id,user_id,role) VALUES($1,$2,$3,'owner')`, "mem_"+newID(), orgID, p.userID)
 		}
 		if err != nil {
@@ -434,7 +444,7 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			writeJSON(w, 409, problem{Error: "organization creation conflict"})
 			return
 		}
-		writeJSON(w, 201, map[string]any{"id": orgID, "name": in.Name, "slug": slug, "country_code": in.Country, "status": "active", "role": "owner"})
+		writeJSON(w, 201, map[string]any{"id": orgID, "name": in.Name, "slug": slug, "country_code": in.Country, "workspace_type": in.WorkspaceType, "status": "active", "role": "owner"})
 		return
 	}
 	notFound(w, r)

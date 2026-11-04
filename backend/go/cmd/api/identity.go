@@ -140,7 +140,14 @@ func roleAllows(p principal, r *http.Request) bool {
 		if len(parts) >= 3 && parts[1] == "mfa" {
 			return p.sessionID != ""
 		}
+		if len(parts) == 2 && parts[1] == "organizations" {
+			return p.sessionID != ""
+		}
 	case "organizations":
+		// Any signed-in user may create a workspace of their own.
+		if len(parts) == 1 && r.Method == http.MethodPost && p.sessionID != "" {
+			return true
+		}
 		scope = "organization.read"
 	case "members":
 		if r.Method == http.MethodGet {
@@ -299,11 +306,9 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		in.OrganizationName = strings.TrimSpace(in.FullName) + "'s personal workspace"
 	}
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
-	if in.CountryCode == "" {
-		in.CountryCode = "RW"
-	}
-	if len(in.CountryCode) != 2 {
-		bad(w, r, "country_code must be two letters")
+	in.CountryCode = strings.ToUpper(strings.TrimSpace(in.CountryCode))
+	if len(in.CountryCode) != 2 || !asciiCurrency(in.CountryCode) {
+		bad(w, r, "country_code must be a two-letter ISO 3166 code, for example US, GB, DE, KE or IN")
 		return
 	}
 	pw, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -478,7 +483,7 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 			return
 		}
 		defer rows.Close()
-		var data []map[string]any
+		data := []map[string]any{}
 		for rows.Next() {
 			var id, name, prefix, environment string
 			var scopes []byte
@@ -487,7 +492,7 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 			if rows.Scan(&id, &name, &prefix, &environment, &scopes, &created, &last, &expires, &revoked) == nil {
 				var decoded []string
 				_ = json.Unmarshal(scopes, &decoded)
-				data = append(data, map[string]any{"id": id, "name": name, "key_prefix": prefix, "environment": environment, "scopes": decoded, "created_at": created, "last_used_at": last, "expires_at": expires, "revoked_at": revoked})
+				data = append(data, map[string]any{"id": id, "name": name, "key_prefix": prefix, "environment": environment, "scopes": decoded, "created_at": created, "last_used_at": nullableTime(last), "expires_at": nullableTime(expires), "revoked_at": nullableTime(revoked)})
 			}
 		}
 		writeJSON(w, 200, map[string]any{"data": data})
@@ -532,7 +537,7 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 			return
 		}
 		defer rows.Close()
-		var data []map[string]any
+		data := []map[string]any{}
 		for rows.Next() {
 			var membershipID, id, email, name, role, status string
 			var joined time.Time

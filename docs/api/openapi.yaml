@@ -54,14 +54,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [full_name, email, password]
+              required: [full_name, email, password, country_code]
               properties:
                 workspace_type: {type: string, enum: [personal, business], default: business}
                 organization_name: {type: string, description: Required for business workspaces; personal workspaces are named from full_name}
                 full_name: {type: string}
                 email: {type: string, format: email}
                 password: {type: string, minLength: 12, maxLength: 72}
-                country_code: {type: string, minLength: 2, maxLength: 2, default: RW}
+                country_code: {type: string, minLength: 2, maxLength: 2, description: ISO 3166 alpha-2 country of the workspace, for example US, GB, DE, KE or IN}
       responses: {'201': {description: Created owner and bearer session}, '409': {description: Email already exists}}
   /v1/auth/login:
     post:
@@ -77,6 +77,15 @@ paths:
       summary: Inspect current organization and role
       description: For user sessions the response also includes full_name, email and the session expires_at.
       responses: {'200': {description: Authenticated principal}}
+  /v1/auth/organizations:
+    get:
+      summary: List the workspaces the signed-in user can switch to
+      description: Send the chosen ID as X-Organization-ID on later requests. Requires a user session.
+      responses: {'200': {description: Active memberships with role, workspace type and country}}
+  /v1/auth/mfa/status:
+    get:
+      summary: Whether authenticator-app MFA is enabled for the signed-in user
+      responses: {'200': {description: MFA status}}
   /v1/auth/logout:
     post:
       summary: Revoke current user session
@@ -191,10 +200,10 @@ paths:
           content: {application/json: {schema: {$ref: '#/components/schemas/Organization'}}}
     post:
       summary: Create an additional organization for the current user
-      description: Requires an owner or admin user session. The user receives owner membership in the new organization.
+      description: Any signed-in user session can create a workspace and becomes its owner. Select it afterwards with X-Organization-ID.
       requestBody:
         required: true
-        content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string}, slug: {type: string}, country_code: {type: string, minLength: 2, maxLength: 2}}}}}
+        content: {application/json: {schema: {type: object, required: [name, country_code], properties: {name: {type: string}, slug: {type: string}, country_code: {type: string, minLength: 2, maxLength: 2}, workspace_type: {type: string, enum: [business, personal], default: business}}}}}
       responses:
         '201': {description: Organization created}
         '403': {description: Owner or admin session required}

@@ -1,6 +1,12 @@
 export type ApiError = Error & { status?: number; requestId?: string };
 
 let unauthorizedHandler: (() => void) | null = null;
+let organizationId: string | null = null;
+
+/** Selects the workspace sent as X-Organization-ID on every request. */
+export function setOrganizationId(id: string | null) {
+  organizationId = id;
+}
 
 /** Registers the callback used when an authenticated request returns 401. */
 export function setUnauthorizedHandler(handler: (() => void) | null) {
@@ -31,6 +37,9 @@ async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
   if (fetchInit.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  if (organizationId && !headers.has("X-Organization-ID")) {
+    headers.set("X-Organization-ID", organizationId);
+  }
 
   const response = await fetch(`/proxy/v1${path}`, {
     ...fetchInit,
@@ -59,8 +68,13 @@ export function api<T>(path: string, init: ApiInit = {}): Promise<T> {
 
 /** CSV and other binary downloads through the same-origin proxy. */
 export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  if (organizationId && !headers.has("X-Organization-ID")) {
+    headers.set("X-Organization-ID", organizationId);
+  }
   const response = await fetch(`/proxy/v1${path}`, {
     ...init,
+    headers,
     credentials: "same-origin",
     cache: "no-store"
   });

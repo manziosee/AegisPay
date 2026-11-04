@@ -15,6 +15,7 @@ import {
   SheetTitle
 } from "@/components/ui/sheet";
 import { useSession } from "@/components/providers/session-provider";
+import { WebhookEndpointManager } from "@/components/webhooks/endpoint-manager";
 import { api, errorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { Page, WebhookDelivery, WebhookEndpoint } from "@/lib/types";
@@ -93,6 +94,8 @@ export default function WebhooksPage() {
         title="Webhooks"
         description="Inspect delivery attempts and HTTP outcomes. Payload bodies are not exposed by this API version; retries preserve the attempt history."
       />
+
+      <WebhookEndpointManager endpoints={endpoints} onChange={load} />
 
       <Panel>
         <PanelHeader

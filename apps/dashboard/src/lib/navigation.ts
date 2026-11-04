@@ -4,7 +4,10 @@ import {
   BookOpen,
   Building2,
   Gauge,
+  HandCoins,
+  KeyRound,
   Landmark,
+  UserRound,
   Network,
   Send,
   Settings,
@@ -60,6 +63,24 @@ export const workspaceNav: NavItem[] = [
     badgeKey: "approvals"
   },
   {
+    href: "/app/payments",
+    label: "Collections and transfers",
+    icon: HandCoins,
+    group: "Operate",
+    description: "Create, confirm and refund collections; move funds between accounts",
+    keywords: "collection payment confirm refund transfer send",
+    visible: (role) => canFinance(role)
+  },
+  {
+    href: "/app/customers",
+    label: "Customers",
+    icon: UserRound,
+    group: "Operate",
+    description: "People and businesses you collect from",
+    keywords: "customer payer directory contact",
+    visible: (role) => canFinance(role) || role === "auditor"
+  },
+  {
     href: "/app/reconciliation",
     label: "Reconciliation",
     icon: Landmark,
@@ -98,11 +119,20 @@ export const workspaceNav: NavItem[] = [
     visible: (role) => canViewAccounts(role)
   },
   {
+    href: "/app/developers",
+    label: "API keys",
+    icon: KeyRound,
+    group: "Developers",
+    description: "Create, rotate and revoke server credentials",
+    keywords: "api key token secret rotate revoke developer",
+    visible: (role) => isAdmin(role) || role === "developer"
+  },
+  {
     href: "/app/webhooks",
     label: "Webhooks",
     icon: Webhook,
     group: "Developers",
-    description: "Delivery attempts and retries",
+    description: "Endpoints, delivery attempts and retries",
     keywords: "events deliveries signature",
     visible: (role) => isAdmin(role) || role === "developer"
   },

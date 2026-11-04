@@ -109,6 +109,7 @@ The Kubernetes Kustomize base deploys the same services with single replicas and
 - Unified transaction reporting across collections, transfers, and refunds, with date/type/status/currency filters, per-currency totals, and JSON or CSV export.
 - Redis-backed request limits and Prometheus request counters at `/metrics`.
 - A Next.js 16 business workspace with a global `Ctrl/Cmd+K` command palette, work-first overview, transaction report with a detail timeline, maker-checker approvals, a reconciliation matcher with collection search, Aegis Intelligence evaluation and review cases, multi-currency accounts, bank-file receive/send records, webhook delivery evidence with retry, a browser-local routing preview, period close controls, team access, and currency policy settings.
+- Self-service in the dashboard for everything the API offers: a workspace switcher (create and switch between business and personal workspaces), customers, collections (create, confirm, cancel, refund), internal transfers, sandbox credits, API keys (scoped, expiring, rotate, revoke), webhook endpoints with a signature-verification snippet, and authenticator-app MFA with a QR code.
 - Personal and business workspaces can use bank-file receive/send records without connecting a payment provider. AegisPay is the workflow and evidence layer; each user's bank remains responsible for moving funds.
 
 ## Run locally
@@ -152,6 +153,16 @@ Run the Go API unit tests and the dashboard browser workflows with:
 (cd backend/go && go test ./...)
 (cd apps/dashboard && npm ci && npx playwright install chromium && npm run test:e2e)
 ```
+
+`npm run test:e2e` uses mocked API responses. `npm run test:live` drives a real dashboard and API end to end, with no mocks. It covers sign-up, customers, accounts, collections, refunds, transfers, API keys, webhooks, MFA and workspace switching, and it creates a fresh sandbox workspace on each run:
+
+```sh
+cd apps/dashboard
+LIVE_BASE_URL=https://aegispays.netlify.app npm run test:live   # deployed sandbox
+LIVE_BASE_URL=http://127.0.0.1:3000 npm run test:live           # local stack
+```
+
+To develop the dashboard against the deployed API, copy `apps/dashboard/.env.example` to `.env.local`; it points `API_PROXY_TARGET` at `https://aegispay.fly.dev`.
 
 The browser tests use mocked API responses and do not write to the local business database.
 
@@ -247,6 +258,7 @@ These deploy the whole stack on your own infrastructure; see [Run locally](#run-
 | --- | --- | --- |
 | [`ci.yml`](.github/workflows/ci.yml) | Every push and pull request | Go formatting, `go vet`, Go unit tests, plus the dashboard typecheck, production build and Playwright browser tests |
 | [`deploy-backend.yml`](.github/workflows/deploy-backend.yml) | Pushes to `main` that change `backend/go/**`, or a manual run | Runs the Go tests, deploys to Fly.io with `flyctl deploy --remote-only`, then waits until `/health/ready` and `/openapi.yaml` respond |
+| [`live-smoke.yml`](.github/workflows/live-smoke.yml) | Daily and on demand | Runs `npm run test:live` against the deployed dashboard and API |
 | [`container-security.yml`](.github/workflows/container-security.yml) | Every push and pull request | Builds the API and fraud images and scans them with Trivy for high and critical issues |
 | Netlify (Git integration) | Pushes to `main` | Builds and publishes the dashboard |
 
@@ -274,6 +286,7 @@ Settings read by the Go API. Secrets go in `.env` locally, `fly secrets` on Fly.
 | `TRUSTED_CLIENT_IP_HEADER` | On Fly.io | Edge header holding the client address (`Fly-Client-IP`). Only set it if every request passes through that edge. |
 | `TRUSTED_PROXY_CIDRS` | Optional | Load-balancer ranges whose `X-Forwarded-For` is trusted. |
 | `HTTP_ADDR` | Optional | Listen address (default `:8080`). |
+| `RATE_LIMIT_PER_MINUTE` | Optional | Requests per minute for each authenticated credential (default 600). |
 | `FRAUD_SERVICE_URL` | Optional | Fraud scorer URL (default `http://fraud:8090`). Without it, risk analysis returns 503. |
 | `TRANSFER_APPROVAL_THRESHOLD_MINOR` | Optional | Fallback approval threshold when an organization has no policy. |
 | `WEBHOOK_WORKER_CONCURRENCY` / `OUTBOX_BATCH_SIZE` | Optional | Webhook worker pool size (16) and outbox batch size (200). |

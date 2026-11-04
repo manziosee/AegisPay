@@ -13,3 +13,7 @@ apps/dashboard/test-results/
 .DS_Store
 
 backups/
+
+# Local Go builds
+backend/go/cmd/api/api
+backend/go/aegispay-api
