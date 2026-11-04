@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { useSession } from "@/components/providers/session-provider";
 import { WebhookEndpointManager } from "@/components/webhooks/endpoint-manager";
+import { EventsPanel } from "@/components/webhooks/events-panel";
 import { api, errorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { Page, WebhookDelivery, WebhookEndpoint } from "@/lib/types";
@@ -194,6 +195,8 @@ export default function WebhooksPage() {
           )}
         </div>
       </Panel>
+
+      <EventsPanel onReplay={load} />
 
       <Sheet open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}>
         <SheetContent className="w-full overflow-y-auto border-border bg-paper p-0 sm:max-w-[520px]">

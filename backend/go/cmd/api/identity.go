@@ -110,6 +110,8 @@ func (a *App) sessionPrincipal(r *http.Request, token string) (principal, bool) 
 	if err != nil {
 		return principal{}, false
 	}
+	// Record activity for the session list, at most every five minutes.
+	_, _ = a.db.ExecContext(r.Context(), `UPDATE user_sessions SET last_seen_at=now() WHERE id=$1 AND (last_seen_at IS NULL OR last_seen_at<now()-interval '5 minutes')`, sessionID)
 	requested := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
 	var org, role string
 	if requested != "" {
@@ -141,6 +143,9 @@ func roleAllows(p principal, r *http.Request) bool {
 			return p.sessionID != ""
 		}
 		if len(parts) == 2 && parts[1] == "organizations" {
+			return p.sessionID != ""
+		}
+		if len(parts) >= 2 && parts[1] == "sessions" {
 			return p.sessionID != ""
 		}
 	case "organizations":
@@ -230,10 +235,16 @@ func roleAllows(p principal, r *http.Request) bool {
 		}
 	case "reconciliation":
 		scope = "reconciliation.manage"
+	case "events":
+		if r.Method == http.MethodGet {
+			scope = "webhooks.read"
+		} else {
+			scope = "webhooks.manage"
+		}
 	case "webhook-endpoints":
 		if r.Method == http.MethodGet {
 			scope = "webhooks.read"
-		} else if len(parts) > 2 && parts[2] == "disable" {
+		} else if len(parts) > 2 && (parts[2] == "disable" || parts[2] == "test" || parts[2] == "rotate-secret") {
 			scope = "webhooks.manage"
 		} else if r.Method == http.MethodPost {
 			scope = "webhooks.manage"
@@ -248,6 +259,12 @@ func roleAllows(p principal, r *http.Request) bool {
 		}
 	case "audit-logs":
 		scope = "audit.read"
+	case "risk-rules":
+		if r.Method == http.MethodGet || len(parts) == 2 && parts[1] == "evaluate" {
+			scope = "risk_rules.read"
+		} else {
+			scope = "risk_rules.manage"
+		}
 	case "reports":
 		scope = "reports.read"
 	}
@@ -268,15 +285,16 @@ func roleAllows(p principal, r *http.Request) bool {
 	case "finance_operator":
 		return scope == "transaction_policies.read" || strings.HasSuffix(scope, ".read") || scope == "bank_workflows.manage" || scope == "collections.create" || scope == "collections.cancel" || scope == "collections.confirm" || scope == "transfers.create" || scope == "transfers.approve" || scope == "accounts.read" || scope == "accounts.create" || scope == "customers.read" || scope == "customers.create" || scope == "reports.read" || scope == "reconciliation.manage"
 	case "fraud_analyst":
-		return scope == "fraud.read" || scope == "fraud.analyze" || scope == "fraud.investigate" || scope == "collections.read" || scope == "transfers.read" || scope == "ledger.read" || scope == "reports.read"
+		return scope == "fraud.read" || scope == "fraud.analyze" || scope == "fraud.investigate" || scope == "risk_rules.read" || scope == "risk_rules.manage" || scope == "collections.read" || scope == "transfers.read" || scope == "ledger.read" || scope == "reports.read"
 	case "developer":
-		return scope == "api_keys.read" || scope == "api_keys.create" || scope == "api_keys.revoke" || scope == "webhooks.read" || scope == "webhooks.manage" || scope == "organization.read"
+		return scope == "api_keys.read" || scope == "api_keys.create" || scope == "api_keys.revoke" || scope == "risk_rules.read" || scope == "webhooks.read" || scope == "webhooks.manage" || scope == "organization.read"
 	case "auditor":
 		return strings.HasSuffix(scope, ".read") || scope == "organization.read"
 	}
 	return false
 }
 func (a *App) register(w http.ResponseWriter, r *http.Request) {
+	agent, ip := sessionMeta(r)
 	var in struct {
 		OrganizationName string `json:"organization_name"`
 		WorkspaceType    string `json:"workspace_type"`
@@ -334,7 +352,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	token := "aegis_session_" + newID()
 	expires := time.Now().Add(12 * time.Hour)
 	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO user_sessions(id,user_id,token_hash,expires_at) VALUES($1,$2,$3,$4)`, "ses_"+newID(), userID, tokenHash(token), expires)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO user_sessions(id,user_id,token_hash,expires_at,user_agent,ip_address,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,now())`, "ses_"+newID(), userID, tokenHash(token), expires, agent, ip)
 	}
 	if err != nil {
 		writeJSON(w, 409, problem{Error: "account could not be registered; email may already be in use", RequestID: requestID(r)})
@@ -404,9 +422,10 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) issueSession(w http.ResponseWriter, r *http.Request, userID, name, org, role string) {
+	agent, ip := sessionMeta(r)
 	token := "aegis_session_" + newID()
 	expires := time.Now().UTC().Add(12 * time.Hour)
-	_, err := a.db.ExecContext(r.Context(), `INSERT INTO user_sessions(id,user_id,token_hash,expires_at) VALUES($1,$2,$3,$4)`, "ses_"+newID(), userID, tokenHash(token), expires)
+	_, err := a.db.ExecContext(r.Context(), `INSERT INTO user_sessions(id,user_id,token_hash,expires_at,user_agent,ip_address,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,now())`, "ses_"+newID(), userID, tokenHash(token), expires, agent, ip)
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "session creation failed"})
 		return
@@ -516,7 +535,7 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 }
 func validScope(s string) bool {
 	switch s {
-	case "organization.read", "members.read", "members.manage", "api_keys.read", "api_keys.create", "api_keys.revoke", "customers.read", "customers.create", "accounts.read", "accounts.create", "accounts.sandbox_credit", "collections.read", "collections.create", "collections.cancel", "collections.confirm", "collections.refund", "transfers.read", "transfers.create", "ledger.read", "fraud.read", "fraud.analyze", "fraud.investigate", "reconciliation.manage", "webhooks.read", "webhooks.manage", "reports.read", "audit.read", "transaction_policies.read", "transaction_policies.manage", "*":
+	case "organization.read", "members.read", "members.manage", "api_keys.read", "api_keys.create", "api_keys.revoke", "customers.read", "customers.create", "accounts.read", "accounts.create", "accounts.sandbox_credit", "collections.read", "collections.create", "collections.cancel", "collections.confirm", "collections.refund", "transfers.read", "transfers.create", "ledger.read", "fraud.read", "fraud.analyze", "fraud.investigate", "reconciliation.manage", "webhooks.read", "webhooks.manage", "reports.read", "audit.read", "transaction_policies.read", "transaction_policies.manage", "risk_rules.read", "risk_rules.manage", "*":
 		return true
 	}
 	return false

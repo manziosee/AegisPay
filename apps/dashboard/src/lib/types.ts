@@ -288,19 +288,6 @@ export type TimelineEvent = {
   detail?: string;
 };
 
-export type RoutingAction = "prefer" | "review" | "hold";
-
-export type RoutingRule = {
-  id: string;
-  label: string;
-  currency: string;
-  minMinor: number | null;
-  maxMinor: number | null;
-  country: string;
-  action: RoutingAction;
-  enabled: boolean;
-};
-
 export type ControlHealth = {
   open_reconciliation_exceptions?: number;
   pending_approvals?: number;
@@ -372,3 +359,56 @@ export type ApiKeySecret = {
 export type MfaStatus = { enabled: boolean; method: "totp"; enabled_at: string | null };
 
 export type MfaEnrollment = { status: string; secret: string; otpauth_uri: string };
+
+export type RiskSubjectKind = "collection" | "transfer" | "payout";
+export type RiskAction = "allow" | "review" | "block";
+
+export type RiskRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  applies_to: RiskSubjectKind[];
+  currency: string | null;
+  min_amount_minor: number | null;
+  max_amount_minor: number | null;
+  velocity_count: number | null;
+  velocity_window_minutes: number | null;
+  action: RiskAction;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RiskMatch = { id: string; name: string; action: RiskAction; reason: string };
+
+export type RiskEvaluation = { decision: RiskAction; matched_rules: RiskMatch[] };
+
+export type EventRecord = {
+  id: string;
+  type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  data: Record<string, unknown>;
+  created_at: string;
+  published_at: string | null;
+  deliveries: number;
+  delivered: number;
+};
+
+export type UserSession = {
+  id: string;
+  user_agent: string;
+  ip_address: string;
+  created_at: string;
+  expires_at: string;
+  last_seen_at: string | null;
+  current: boolean;
+};
+
+export type AuditVerification = {
+  valid: boolean;
+  checked: number;
+  head_hash?: string;
+  first_invalid_id?: string;
+  detail?: string;
+};

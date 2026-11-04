@@ -110,6 +110,10 @@ The Kubernetes Kustomize base deploys the same services with single replicas and
 - Redis-backed request limits and Prometheus request counters at `/metrics`.
 - A Next.js 16 business workspace with a global `Ctrl/Cmd+K` command palette, work-first overview, transaction report with a detail timeline, maker-checker approvals, a reconciliation matcher with collection search, Aegis Intelligence evaluation and review cases, multi-currency accounts, bank-file receive/send records, webhook delivery evidence with retry, a browser-local routing preview, period close controls, team access, and currency policy settings.
 - Self-service in the dashboard for everything the API offers: a workspace switcher (create and switch between business and personal workspaces), customers, collections (create, confirm, cancel, refund), internal transfers, sandbox credits, API keys (scoped, expiring, rotate, revoke), webhook endpoints with a signature-verification snippet, and authenticator-app MFA with a QR code.
+- **Risk rules in the payment flow.** Organization rules run on the server before every collection, transfer and payout is recorded. They match on currency, amount range and velocity (counted per customer or per source account). Block refuses the request with the reason. Review opens a case, routes transfers and payouts to approval, and keeps a collection from being confirmed until the case is resolved. A dry-run endpoint and screen show which rules would match.
+- **Developer tools.** An event log with payloads and delivery counts, event replay to current endpoints, signed `test.ping` deliveries, and webhook signing-secret rotation.
+- **Sessions.** Each user sees their active sessions with device, IP address and last activity, and can sign out one session or every other one.
+- **Tamper-evident audit log.** Each audit row stores the SHA-256 of the previous row's hash plus its own content, and the database refuses updates and deletes. `GET /v1/audit-logs/verify` (and **Verify integrity** in the dashboard) recomputes the chain.
 - Personal and business workspaces can use bank-file receive/send records without connecting a payment provider. AegisPay is the workflow and evidence layer; each user's bank remains responsible for moving funds.
 
 ## Run locally
@@ -256,11 +260,12 @@ These deploy the whole stack on your own infrastructure; see [Run locally](#run-
 
 | Workflow | Runs on | What it does |
 | --- | --- | --- |
-| [`ci.yml`](.github/workflows/ci.yml) | Every push and pull request | Go formatting, `go vet`, Go unit tests, plus the dashboard typecheck, production build and Playwright browser tests |
+| [`ci.yml`](.github/workflows/ci.yml) | Every push and pull request | Go formatting, `go vet`, unit tests and `govulncheck`; the API built and run against real PostgreSQL and Redis with [`scripts/api_integration_test.py`](scripts/api_integration_test.py) (every migration on an empty database, then risk rules, events, sessions and the audit chain); OpenAPI lint; dashboard typecheck, production build and Playwright tests |
 | [`deploy-backend.yml`](.github/workflows/deploy-backend.yml) | Pushes to `main` that change `backend/go/**`, or a manual run | Runs the Go tests, deploys to Fly.io with `flyctl deploy --remote-only`, then waits until `/health/ready` and `/openapi.yaml` respond |
 | [`live-smoke.yml`](.github/workflows/live-smoke.yml) | Daily and on demand | Runs `npm run test:live` against the deployed dashboard and API |
 | [`container-security.yml`](.github/workflows/container-security.yml) | Every push and pull request | Builds the API and fraud images and scans them with Trivy for high and critical issues |
 | Netlify (Git integration) | Pushes to `main` | Builds and publishes the dashboard |
+| [Dependabot](.github/dependabot.yml) | Weekly | Update pull requests for Go modules, npm, pip, GitHub Actions and the API base image |
 
 The deploy workflow needs one repository secret, a Fly deploy token scoped to the `aegispay` app:
 

@@ -5,6 +5,7 @@ import { Building2, Clock3, Fingerprint, LockKeyhole, Plus, Users } from "lucide
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
+import { SessionsPanel } from "@/components/settings/sessions-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -308,6 +309,7 @@ export default function SettingsPage() {
       </p>
 
       <SecurityPanel />
+      <SessionsPanel />
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="sm:max-w-[520px]">

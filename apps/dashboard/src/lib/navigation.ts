@@ -110,6 +110,15 @@ export const workspaceNav: NavItem[] = [
     badgeKey: "cases"
   },
   {
+    href: "/app/risk-rules",
+    label: "Risk rules",
+    icon: Workflow,
+    group: "Intelligence",
+    description: "Allow, review or block payments before they are recorded",
+    keywords: "rules velocity limits block review routing fraud",
+    visible: (role) => canReviewFraud(role) || canFinance(role) || role === "auditor" || role === "developer"
+  },
+  {
     href: "/app/accounts",
     label: "Accounts",
     icon: BookOpen,
@@ -134,15 +143,6 @@ export const workspaceNav: NavItem[] = [
     group: "Developers",
     description: "Endpoints, delivery attempts and retries",
     keywords: "events deliveries signature",
-    visible: (role) => isAdmin(role) || role === "developer"
-  },
-  {
-    href: "/app/routing",
-    label: "Routing preview",
-    icon: Workflow,
-    group: "Developers",
-    description: "Local rule evaluation",
-    keywords: "provider rules eligibility",
     visible: (role) => isAdmin(role) || role === "developer"
   },
   {

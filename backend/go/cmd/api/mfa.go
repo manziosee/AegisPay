@@ -144,6 +144,7 @@ func (a *App) userMFA(w http.ResponseWriter, r *http.Request, parts []string) {
 }
 
 func (a *App) verifyMFALogin(w http.ResponseWriter, r *http.Request) {
+	agent, ip := sessionMeta(r)
 	var in struct {
 		Token string `json:"mfa_token"`
 		Code  string `json:"code"`
@@ -187,7 +188,7 @@ func (a *App) verifyMFALogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token := "aegis_session_" + newID()
 	expires := time.Now().UTC().Add(12 * time.Hour)
-	if _, err = tx.ExecContext(r.Context(), "INSERT INTO user_sessions(id,user_id,token_hash,expires_at) VALUES($1,$2,$3,$4)", "ses_"+newID(), userID, tokenHash(token), expires); err != nil {
+	if _, err = tx.ExecContext(r.Context(), "INSERT INTO user_sessions(id,user_id,token_hash,expires_at,user_agent,ip_address,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,now())", "ses_"+newID(), userID, tokenHash(token), expires, agent, ip); err != nil {
 		writeJSON(w, 500, problem{Error: "session creation failed"})
 		return
 	}

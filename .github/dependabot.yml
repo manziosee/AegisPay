@@ -1,0 +1,23 @@
+# Weekly dependency update pull requests (free on private repositories).
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /backend/go
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /apps/dashboard
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /backend/python/fraud
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /backend/go
+    schedule: {interval: weekly}

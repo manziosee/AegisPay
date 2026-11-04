@@ -171,14 +171,14 @@ export const pillars = [
   },
   {
     id: "routing",
-    title: "Aegis Routing",
-    summary: "Integrate once. Route by rule.",
+    title: "Aegis Rules",
+    summary: "Decide before money moves.",
     description:
-      "The routing surface is a preview in this build. Ordered rules are evaluated in the browser against amount, currency and country. No provider connector is configured.",
+      "Risk rules run on the server before a collection, transfer or payout is recorded. Match on currency, amount and velocity per customer or account, then allow, hold for review or block.",
     bullets: [
-      "Rules are stored in this browser, not sent to the server",
-      "No provider availability, cost or success rate is claimed",
-      "The result reads Preview, never Routed"
+      "The strictest matching rule wins: block, then review, then allow",
+      "Review opens a case and holds posting until a person decides",
+      "Every assessment is stored with the rules that matched"
     ],
     badge: "Preview"
   },

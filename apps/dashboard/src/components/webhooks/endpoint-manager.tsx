@@ -9,7 +9,7 @@ import { Field, FormDialog } from "@/components/ui-blocks/form-dialog";
 import { StatusBadge } from "@/components/data/status-badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { WebhookEndpoint } from "@/lib/types";
 
@@ -50,6 +50,23 @@ export function WebhookEndpointManager({
   const [events, setEvents] = useState<string[]>(["collection.succeeded", "refund.completed", "transfer.completed"]);
   const [disabling, setDisabling] = useState<WebhookEndpoint | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
+  const [rotating, setRotating] = useState<WebhookEndpoint | null>(null);
+
+  const sendTest = async (endpoint: WebhookEndpoint) => {
+    try {
+      await api(`/webhook-endpoints/${encodeURIComponent(endpoint.id)}/test`, { method: "POST" });
+      toast.success("Test event queued. It appears under deliveries within a few seconds.");
+      await onChange();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const rotate = async () => {
+    if (!rotating) return;
+    const result = await api<{ signing_secret: string }>(`/webhook-endpoints/${encodeURIComponent(rotating.id)}/rotate-secret`, { method: "POST" });
+    setSecret(result.signing_secret);
+  };
 
   const create = async () => {
     if (events.length === 0) throw new Error("Choose at least one event.");
@@ -96,9 +113,17 @@ export function WebhookEndpointManager({
                 </div>
                 <StatusBadge status={endpoint.status ?? "active"} />
                 {endpoint.status !== "disabled" && (
-                  <Button size="sm" variant="outline" className="h-7 border-coral/30 text-[11px] text-coral" onClick={() => setDisabling(endpoint)}>
-                    Disable
-                  </Button>
+                  <span className="inline-flex gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void sendTest(endpoint)}>
+                      Send test
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setRotating(endpoint)}>
+                      Rotate secret
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 border-coral/30 text-[11px] text-coral" onClick={() => setDisabling(endpoint)}>
+                      Disable
+                    </Button>
+                  </span>
                 )}
               </li>
             ))}
@@ -142,6 +167,18 @@ export function WebhookEndpointManager({
         destructive
         submitLabel="Disable endpoint"
         onSubmit={disable}
+      >
+        <></>
+      </FormDialog>
+
+      <FormDialog
+        open={rotating !== null}
+        onOpenChange={(next) => !next && setRotating(null)}
+        title="Rotate signing secret"
+        description={`The current secret for ${rotating?.url ?? ""} stops working immediately. Update your receiver with the new secret.`}
+        destructive
+        submitLabel="Rotate secret"
+        onSubmit={rotate}
       >
         <></>
       </FormDialog>

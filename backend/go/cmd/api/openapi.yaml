@@ -61,7 +61,7 @@ paths:
                 full_name: {type: string}
                 email: {type: string, format: email}
                 password: {type: string, minLength: 12, maxLength: 72}
-                country_code: {type: string, minLength: 2, maxLength: 2, description: ISO 3166 alpha-2 country of the workspace, for example US, GB, DE, KE or IN}
+                country_code: {type: string, minLength: 2, maxLength: 2, description: 'ISO 3166 alpha-2 country of the workspace, for example US, GB, DE, KE or IN'}
       responses: {'201': {description: Created owner and bearer session}, '409': {description: Email already exists}}
   /v1/auth/login:
     post:
@@ -81,11 +81,25 @@ paths:
     get:
       summary: List the workspaces the signed-in user can switch to
       description: Send the chosen ID as X-Organization-ID on later requests. Requires a user session.
-      responses: {'200': {description: Active memberships with role, workspace type and country}}
+      responses: {'200': {description: 'Active memberships with role, workspace type and country'}}
   /v1/auth/mfa/status:
     get:
       summary: Whether authenticator-app MFA is enabled for the signed-in user
       responses: {'200': {description: MFA status}}
+  /v1/auth/sessions:
+    get:
+      summary: List the signed-in user's active sessions
+      description: Includes device (user agent), IP address, sign-in and last-activity times, and which session made the request.
+      responses: {'200': {description: Active sessions}}
+  /v1/auth/sessions/revoke-others:
+    post:
+      summary: Sign out every other session of the signed-in user
+      responses: {'200': {description: Number of sessions revoked}}
+  /v1/auth/sessions/{id}/revoke:
+    post:
+      summary: Sign out one session of the signed-in user
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Session revoked}, '404': {description: Not found}}
   /v1/auth/logout:
     post:
       summary: Revoke current user session
@@ -159,7 +173,7 @@ paths:
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [invite_token], properties: {invite_token: {type: string}}}}}
-      responses: {'200': {description: Membership activated}, '404': {description: Invalid, expired, or previously used invitation}}
+      responses: {'200': {description: Membership activated}, '404': {description: 'Invalid, expired, or previously used invitation'}}
   /v1/transaction-policies:
     get:
       summary: List organization transaction limits by currency
@@ -318,7 +332,7 @@ paths:
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/TransferCreate'}}}
-      responses: {'201': {description: Posted transfer}, '400': {$ref: '#/components/responses/BadRequest'}, '409': {description: Insufficient funds, duplicate reference, or serialization conflict}}
+      responses: {'201': {description: Posted transfer}, '400': {$ref: '#/components/responses/BadRequest'}, '409': {description: 'Insufficient funds, duplicate reference, or serialization conflict'}}
   /v1/transfers/{id}/approve:
     post:
       summary: Approve a transfer pending review
@@ -327,7 +341,7 @@ paths:
       requestBody:
         required: false
         content: {application/json: {schema: {type: object, properties: {note: {type: string, maxLength: 500}}}}}
-      responses: {'200': {description: Transfer approved and ledger posted}, '403': {description: Separation of duties denied}, '409': {description: Not pending, or the accounting period is closed}}
+      responses: {'200': {description: Transfer approved and ledger posted}, '403': {description: Separation of duties denied}, '409': {description: 'Not pending, or the accounting period is closed'}}
   /v1/transfers/{id}/reject:
     post:
       summary: Reject a transfer pending review
@@ -381,7 +395,7 @@ paths:
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [lines], properties: {source_name: {type: string}, lines: {type: array, minItems: 1, maxItems: 10000, items: {type: object, required: [external_reference, amount, currency], properties: {external_reference: {type: string}, amount: {type: integer, minimum: 1, description: Net settlement in minor currency units}, provider_fee: {type: integer, minimum: 0, default: 0, description: Provider fee in minor currency units}, currency: {type: string, minLength: 3, maxLength: 3}, transaction_date: {type: string, format: date-time}}}}}}}}
-      responses: {'201': {description: Import created with matched_count, exception_count, and reconciled or needs_review status}}
+      responses: {'201': {description: 'Import created with matched_count, exception_count, and reconciled or needs_review status'}}
   /v1/reconciliation/imports/csv:
     post:
       summary: Import a bank statement CSV
@@ -536,6 +550,61 @@ paths:
       summary: Disable endpoint delivery
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: Disabled}}
+  /v1/webhook-endpoints/{id}/test:
+    post:
+      summary: Send a signed test.ping event to one endpoint
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'202': {description: Test delivery queued}, '409': {description: Endpoint disabled}}
+  /v1/webhook-endpoints/{id}/rotate-secret:
+    post:
+      summary: Replace an endpoint's signing secret
+      description: The previous secret stops working immediately; the new secret is returned once.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: New signing secret}}
+  /v1/events:
+    get:
+      summary: List the organization's events with payloads and delivery counts
+      parameters:
+        - {name: type, in: query, schema: {type: string}, description: Filter by event type}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses: {'200': {description: Cursor-paginated events}}
+  /v1/events/{id}/replay:
+    post:
+      summary: Deliver an event again to every active subscribed endpoint
+      description: Requeues existing deliveries and adds deliveries for endpoints subscribed after the event was published.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'202': {description: Number of deliveries queued}, '404': {description: Not found}}
+  /v1/risk-rules:
+    get:
+      summary: List risk rules
+      responses: {'200': {description: Rules ordered by priority}}
+    post:
+      summary: Create a risk rule
+      description: 'Rules run before collections, transfers and payouts are recorded. Every condition set must hold. The strictest matching action wins: block refuses the request (422), review opens a fraud case and holds posting or requires approval, allow only records the assessment.'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RiskRuleInput'}}}
+      responses: {'201': {description: Rule created}, '400': {description: Invalid rule}}
+  /v1/risk-rules/{id}:
+    put:
+      summary: Replace a risk rule
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RiskRuleInput'}}}
+      responses: {'200': {description: Rule updated}, '404': {description: Not found}}
+    delete:
+      summary: Delete a risk rule
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Rule deleted}, '404': {description: Not found}}
+  /v1/risk-rules/evaluate:
+    post:
+      summary: Dry-run the rules against a hypothetical payment
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [kind, amount, currency], properties: {kind: {type: string, enum: [collection, transfer, payout]}, amount: {type: integer, minimum: 1}, currency: {type: string}, customer_id: {type: string}, source_account_id: {type: string}}}}}
+      responses: {'200': {description: Decision and matched rules; nothing is recorded}}
   /v1/webhook-deliveries:
     get:
       summary: List webhook delivery attempts
@@ -546,6 +615,11 @@ paths:
       summary: Queue a failed webhook delivery for another attempt
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'202': {description: Delivery queued}, '404': {description: Failed delivery or active endpoint not found}}
+  /v1/audit-logs/verify:
+    get:
+      summary: Verify the tamper-evident audit hash chain
+      description: Each audit record stores SHA-256 of the previous record's hash and its own content; the database refuses updates and deletes. This recomputes the chain and reports the first record that does not match.
+      responses: {'200': {description: 'valid, checked count, and head_hash or first_invalid_id'}}
   /v1/audit-logs:
     get:
       summary: Search organization audit events
@@ -604,6 +678,20 @@ components:
       description: Invalid request
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    RiskRuleInput:
+      type: object
+      required: [name, applies_to, action]
+      properties:
+        name: {type: string, maxLength: 120}
+        enabled: {type: boolean, default: true}
+        priority: {type: integer, default: 100, description: Lower runs first}
+        applies_to: {type: array, items: {type: string, enum: [collection, transfer, payout]}, minItems: 1}
+        currency: {type: string, nullable: true, description: ISO 4217 code; null matches any currency}
+        min_amount_minor: {type: integer, nullable: true, minimum: 1}
+        max_amount_minor: {type: integer, nullable: true, minimum: 1}
+        velocity_count: {type: integer, nullable: true, minimum: 1, description: Matches when this record would exceed this many in the window}
+        velocity_window_minutes: {type: integer, nullable: true, minimum: 1, maximum: 43200}
+        action: {type: string, enum: [allow, review, block]}
     Organization:
       type: object
       properties:

@@ -27,10 +27,69 @@ jobs:
           cache-dependency-path: backend/go/go.sum
       - name: Check formatting of new and maintained files
         run: |
-          unformatted=$(gofmt -l cmd/api/client_ip.go cmd/api/close_period_guard.go cmd/api/docs.go cmd/api/maintenance.go cmd/api/reconciliation_import.go cmd/api/secret_box.go cmd/api/webhooks.go cmd/api/rate_limit.go)
+          unformatted=$(gofmt -l cmd/api/client_ip.go cmd/api/close_period_guard.go cmd/api/docs.go cmd/api/maintenance.go cmd/api/reconciliation_import.go cmd/api/secret_box.go cmd/api/webhooks.go cmd/api/rate_limit.go cmd/api/risk_rules.go cmd/api/events.go cmd/api/sessions.go cmd/api/organizations.go cmd/api/audit_logs.go)
           if [ -n "$unformatted" ]; then echo "Run gofmt on: $unformatted"; exit 1; fi
       - run: go vet ./...
       - run: go test -count=1 ./...
+      - name: Known vulnerabilities in called code (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  api-integration:
+    name: API against Postgres and Redis
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: aegispay
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:ci@127.0.0.1:5432/aegispay?sslmode=disable
+      REDIS_URL: redis://127.0.0.1:6379/0
+      AEGIS_API_KEY: aegis_ci_bootstrap_key_not_secret_0000
+      AEGIS_ORGANIZATION_ID: org_sandbox
+      HTTP_ADDR: 127.0.0.1:8080
+      ENCRYPTION_KEYS: k1:0000000000000000000000000000000000000000000000000000000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go/go.sum
+      - name: Build and start the API (runs every migration on an empty database)
+        working-directory: backend/go
+        run: |
+          go build -o /tmp/aegispay-api ./cmd/api
+          /tmp/aegispay-api > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health/ready && exit 0; sleep 1; done
+          cat /tmp/api.log; exit 1
+      - name: Integration checks
+        env:
+          AUDIT_PSQL_URL: postgres://postgres:ci@127.0.0.1:5432/aegispay
+        run: python3 scripts/api_integration_test.py http://127.0.0.1:8080
+      - name: API log
+        if: always()
+        run: cat /tmp/api.log
+
+  openapi:
+    name: OpenAPI contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx -y @redocly/cli@latest lint docs/api/openapi.yaml --extends=minimal
+      - name: Served copy matches the contract
+        run: cmp docs/api/openapi.yaml backend/go/cmd/api/openapi.yaml
 
   dashboard:
     name: Dashboard

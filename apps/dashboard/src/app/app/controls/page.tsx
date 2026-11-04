@@ -33,6 +33,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { canViewControls, isAdmin } from "@/lib/roles";
 import type {
   AuditEntry,
+  AuditVerification,
   ClosePeriod,
   ControlHealth,
   Delegation,
@@ -235,6 +236,23 @@ export default function ControlsPage() {
       toast.error(errorMessage(error));
     } finally {
       setBusy("");
+    }
+  };
+
+  const [verifying, setVerifying] = useState(false);
+  const verifyChain = async () => {
+    setVerifying(true);
+    try {
+      const result = await api<AuditVerification>("/audit-logs/verify");
+      if (result.valid) {
+        toast.success(`Audit trail intact: ${result.checked} records verified against their hash chain.`);
+      } else {
+        toast.error(`Audit trail tampering detected at ${result.first_invalid_id} after ${result.checked} valid records.`);
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -573,6 +591,10 @@ export default function ControlsPage() {
               <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={exportAudit}>
                 <Download className="size-3.5" />
                 Export CSV
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 text-[11px]" disabled={verifying} onClick={() => void verifyChain()}>
+                <ShieldCheck className="size-3.5" />
+                {verifying ? "Verifying…" : "Verify integrity"}
               </Button>
             </div>
           }

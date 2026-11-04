@@ -162,3 +162,88 @@ test("a new business can run its core money workflows end to end", async ({ page
     await expect(page.getByRole("button", { name: "Switch workspace" })).toContainText(`Smoke ${id}`);
   });
 });
+
+test("risk rules, developer tools, sessions and audit integrity work end to end", async ({ page }) => {
+  test.setTimeout(240_000);
+  const id = Date.now().toString(36);
+
+  await test.step("register a workspace with two funded accounts", async () => {
+    await page.goto("/register");
+    await page.getByLabel("Full name").fill("Rules Tester");
+    await page.getByLabel("Organization name").fill(`Rules ${id}`);
+    await page.getByLabel("Country (two-letter code)").fill("CA");
+    await page.getByLabel("Work email").fill(`rules-${id}@example.com`);
+    await page.locator("#register-password").fill("correct-horse-battery");
+    await page.getByRole("button", { name: /Create account/ }).click();
+    await page.waitForURL(/\/app/);
+    await go(page, "Accounts", "Accounts");
+    for (let i = 0; i < 2; i++) {
+      await page.getByRole("button", { name: "Create account" }).first().click();
+      const form = await dialog(page, "Create a currency account");
+      await form.getByLabel("Currency code").fill("CAD");
+      await form.getByRole("button", { name: "Create account" }).click();
+      await expect(form).toBeHidden();
+    }
+    await page.getByRole("button", { name: "Sandbox credit" }).first().click();
+    const credit = await dialog(page, "Add a sandbox credit");
+    await credit.getByLabel(/Amount/).fill("10000");
+    await credit.getByRole("button", { name: "Post credit" }).click();
+    await expect(page.getByText(/credited\./)).toBeVisible();
+  });
+
+  await test.step("create a block rule and dry-run it", async () => {
+    await go(page, "Risk rules", "Risk rules");
+    await page.getByRole("button", { name: "New rule" }).click();
+    const form = await dialog(page, "New risk rule");
+    await form.getByLabel("Name").fill("Block large CAD transfers");
+    await form.getByLabel("Currency").fill("CAD");
+    await form.getByLabel("Min amount").fill("1000");
+    await form.getByLabel("Action").selectOption("block");
+    await form.getByRole("button", { name: "Create rule" }).click();
+    await expect(page.getByText("Block large CAD transfers")).toBeVisible();
+    await page.locator("#test-amount").fill("2500");
+    await page.locator("#test-currency").fill("CAD");
+    await page.getByRole("button", { name: "Evaluate" }).click();
+    await expect(page.getByRole("status")).toContainText(/block/i);
+  });
+
+  await test.step("the rule blocks a real transfer", async () => {
+    await go(page, "Collections and transfers", "Collections and transfers");
+    await page.getByRole("button", { name: "New transfer" }).click();
+    const form = await dialog(page, "Transfer between accounts");
+    await form.getByLabel("From account").selectOption({ index: 1 });
+    await form.getByLabel("To account").selectOption({ index: 1 });
+    await form.getByLabel(/Amount/).fill("2500");
+    await form.getByRole("button", { name: "Transfer" }).click();
+    await expect(form.getByRole("alert")).toContainText("blocked by risk rule: Block large CAD transfers");
+    await form.getByLabel(/Amount/).fill("50");
+    await form.getByRole("button", { name: "Transfer" }).click();
+    await expect(page.getByText("Transfer completed.")).toBeVisible();
+  });
+
+  await test.step("webhook test event and event log", async () => {
+    await go(page, "Webhooks", "Webhooks");
+    await page.getByRole("button", { name: "Add endpoint" }).click();
+    const form = await dialog(page, "Add a webhook endpoint");
+    await form.getByLabel("Endpoint URL").fill("https://example.com/aegispay-rules");
+    await form.getByRole("button", { name: "Add endpoint" }).click();
+    await (await dialog(page, "Copy the signing secret")).getByRole("button", { name: "I have stored it" }).click();
+    await page.getByRole("button", { name: "Send test" }).click();
+    await expect(page.getByText("Test event queued.")).toBeVisible();
+    await expect(page.getByText("transfer.completed").first()).toBeVisible();
+    await page.getByRole("button", { name: "Replay" }).first().click();
+    await expect(page.getByText(/Queued \d+ deliver|No active endpoint/)).toBeVisible();
+    await page.getByRole("button", { name: "Rotate secret" }).click();
+    await (await dialog(page, "Rotate signing secret")).getByRole("button", { name: "Rotate secret" }).click();
+    await expect((await dialog(page, "Copy the signing secret")).locator("code")).toHaveText(/^[0-9a-f]{64}$/);
+  });
+
+  await test.step("sessions and audit integrity", async () => {
+    await page.keyboard.press("Escape");
+    await go(page, "Organization settings", /settings/i);
+    await expect(page.getByText("This device")).toBeVisible();
+    await go(page, "Close and controls", /close/i);
+    await page.getByRole("button", { name: "Verify integrity" }).click();
+    await expect(page.getByText(/Audit trail intact: \d+ records verified/)).toBeVisible();
+  });
+});

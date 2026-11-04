@@ -65,29 +65,29 @@ function PillarVisual({ id }: { id: string }) {
     return (
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="flex items-center justify-between">
-          <span className="font-mono text-[10.5px] text-ink-400">ordered rules</span>
+          <span className="font-mono text-[10.5px] text-ink-400">risk rules · server-side</span>
           <span className="rounded border border-mint/25 bg-mint/8 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-[#0d7a5f]">
-            Preview
+            Enforced
           </span>
         </div>
         <div className="mt-3 divide-y divide-border border-y border-border">
           {[
-            ["RWF above 5,000,000", "Review"],
-            ["RWF below 5,000,000", "Prefer"],
-            ["Any other currency", "Hold"]
+            ["Transfers above 50,000.00", "Review"],
+            ["4th collection from a customer in 1 hour", "Review"],
+            ["Payouts above 1,000,000.00", "Block"]
           ].map(([rule, action]) => (
             <div key={rule} className="flex items-center justify-between gap-3 py-2.5 text-[11.5px]">
               <span className="text-ink-500">{rule}</span>
               <StatusBadge
                 status={action.toLowerCase()}
                 label={action}
-                tone={action === "Review" ? "warning" : action === "Hold" ? "neutral" : "success"}
+                tone={action === "Review" ? "warning" : action === "Block" ? "danger" : "success"}
               />
             </div>
           ))}
         </div>
         <p className="mt-3 text-[10.5px] leading-relaxed text-ink-400">
-          No live provider connectors are configured in this sandbox.
+          Evaluated before the record is written. Review holds posting until a person decides.
         </p>
       </div>
     );

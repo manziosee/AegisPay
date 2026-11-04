@@ -292,6 +292,10 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 			a.userOrganizations(w, r)
 			return
 		}
+		if len(seg) >= 2 && seg[1] == "sessions" {
+			a.userSessions(w, r, seg[2:])
+			return
+		}
 		if len(seg) == 2 && seg[1] == "logout" && r.Method == "POST" {
 			a.logout(w, r)
 			return
@@ -344,7 +348,13 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 	case "reconciliation":
 		a.reconciliation(w, r, seg)
 	case "webhook-endpoints":
-		a.webhookEndpoints(w, r, seg)
+		if len(seg) == 3 && seg[2] == "test" && r.Method == http.MethodPost {
+			a.testWebhookEndpoint(w, r, seg[1])
+		} else if len(seg) == 3 && seg[2] == "rotate-secret" && r.Method == http.MethodPost {
+			a.rotateWebhookSecret(w, r, seg[1])
+		} else {
+			a.webhookEndpoints(w, r, seg)
+		}
 	case "webhook-deliveries":
 		if len(seg) == 3 && seg[2] == "retry" && r.Method == http.MethodPost {
 			a.retryWebhookDelivery(w, r, seg[1])
@@ -355,6 +365,10 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		}
 	case "audit-logs":
 		a.auditLogs(w, r, seg)
+	case "risk-rules":
+		a.riskRules(w, r, seg)
+	case "events":
+		a.events(w, r, seg)
 	case "reports":
 		if r.Method == "GET" && len(seg) == 2 && seg[1] == "transactions" {
 			a.transactionReport(w, r)
@@ -657,13 +671,26 @@ func (a *App) collections(w http.ResponseWriter, r *http.Request, s []string) {
 			writeJSON(w, 500, problem{Error: "transaction policy check failed"})
 			return
 		}
+		risk, riskErr := evaluateRisk(r.Context(), tx, currentOrgID(r, a.orgID), riskSubject{Kind: "collection", Amount: in.Amount, Currency: in.Currency, CustomerID: in.CustomerID})
+		if riskErr != nil {
+			writeJSON(w, 500, problem{Error: "risk check failed", RequestID: requestID(r)})
+			return
+		}
+		if risk.Decision == "block" {
+			riskBlocked(w, r, risk)
+			return
+		}
 		id := "col_" + newID()
 		_, e = tx.ExecContext(r.Context(), `INSERT INTO collections(id,organization_id,customer_id,amount_minor,currency,description,reference) VALUES($1,$2,NULLIF($3,''),$4,upper($5),$6,$7)`, id, currentOrgID(r, a.orgID), in.CustomerID, in.Amount, in.Currency, in.Description, in.Reference)
 		if e != nil {
 			writeJSON(w, 409, problem{Error: "collection could not be created; reference may already exist"})
 			return
 		}
-		result := map[string]any{"id": id, "status": "pending", "amount": in.Amount, "currency": strings.ToUpper(in.Currency), "reference": in.Reference, "created_at": time.Now().UTC()}
+		if e = recordRiskOutcome(r.Context(), tx, currentOrgID(r, a.orgID), "collection", id, in.Reference, &risk); e != nil {
+			writeJSON(w, 500, problem{Error: "risk assessment could not be recorded", RequestID: requestID(r)})
+			return
+		}
+		result := map[string]any{"id": id, "status": "pending", "amount": in.Amount, "currency": strings.ToUpper(in.Currency), "reference": in.Reference, "created_at": time.Now().UTC(), "risk": risk}
 		if e = storeIdempotency(r.Context(), tx, currentOrgID(r, a.orgID), idemKey, 201, result); e != nil {
 			idempotencyFailure(w, r, e)
 			return

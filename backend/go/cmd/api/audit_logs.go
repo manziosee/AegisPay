@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -9,6 +11,10 @@ import (
 )
 
 func (a *App) auditLogs(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 2 && parts[1] == "verify" && r.Method == http.MethodGet {
+		a.verifyAuditChain(w, r)
+		return
+	}
 	if len(parts) != 1 || r.Method != http.MethodGet {
 		notFound(w, r)
 		return
@@ -95,4 +101,44 @@ func (a *App) auditLogs(w http.ResponseWriter, r *http.Request, parts []string) 
 		next = encodeCursor(pageCursor{ID: last.id, CreatedAt: last.created})
 	}
 	pageResponse(w, data, more, next)
+}
+
+// auditRowHash mirrors the audit_log_hash SQL function.
+func auditRowHash(prev, id, org, actor, action, resourceType, resourceID, metadata string, created time.Time) string {
+	sum := sha256.Sum256([]byte(prev + "|" + id + "|" + org + "|" + actor + "|" + action + "|" + resourceType + "|" + resourceID + "|" + metadata + "|" + created.UTC().Format("2006-01-02T15:04:05.000000")))
+	return hex.EncodeToString(sum[:])
+}
+
+// verifyAuditChain recomputes the organization's audit hash chain and reports
+// the first row whose stored hash or link does not match.
+func (a *App) verifyAuditChain(w http.ResponseWriter, r *http.Request) {
+	org := currentOrgID(r, a.orgID)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,COALESCE(actor_id,''),action,resource_type,resource_id,metadata::text,created_at,COALESCE(prev_hash,''),COALESCE(hash,'') FROM audit_logs WHERE organization_id=$1 ORDER BY seq LIMIT 200000`, org)
+	if err != nil {
+		writeJSON(w, 500, problem{Error: "audit chain could not be read", RequestID: requestID(r)})
+		return
+	}
+	defer rows.Close()
+	prev := strings.Repeat("0", 64)
+	checked := 0
+	for rows.Next() {
+		var id, actor, action, resourceType, resourceID, metadata, storedPrev, storedHash string
+		var created time.Time
+		if err = rows.Scan(&id, &actor, &action, &resourceType, &resourceID, &metadata, &created, &storedPrev, &storedHash); err != nil {
+			writeJSON(w, 500, problem{Error: "audit chain could not be read", RequestID: requestID(r)})
+			return
+		}
+		expected := auditRowHash(prev, id, org, actor, action, resourceType, resourceID, metadata, created)
+		if storedPrev != prev || storedHash != expected {
+			writeJSON(w, 200, map[string]any{"valid": false, "checked": checked, "first_invalid_id": id, "detail": "stored hash does not match the recomputed chain"})
+			return
+		}
+		prev = storedHash
+		checked++
+	}
+	if err = rows.Err(); err != nil {
+		writeJSON(w, 500, problem{Error: "audit chain could not be read", RequestID: requestID(r)})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"valid": true, "checked": checked, "head_hash": prev})
 }

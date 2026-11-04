@@ -329,17 +329,29 @@ func (a *App) bankPayouts(w http.ResponseWriter, r *http.Request, org string) {
 		writeJSON(w, 500, problem{Error: "stored approval policy is invalid"})
 		return
 	}
-	status := "prepared"
-	if payoutNeedsApproval(in.Amount, threshold) {
-		status = "pending_approval"
-	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "database error"})
 		return
 	}
 	defer tx.Rollback()
+	risk, err := evaluateRisk(r.Context(), tx, org, riskSubject{Kind: "payout", Amount: in.Amount, Currency: in.Currency})
+	if err != nil {
+		writeJSON(w, 500, problem{Error: "risk check failed", RequestID: requestID(r)})
+		return
+	}
+	if risk.Decision == "block" {
+		riskBlocked(w, r, risk)
+		return
+	}
+	status := "prepared"
+	if payoutNeedsApproval(in.Amount, threshold) || risk.Decision == "review" {
+		status = "pending_approval"
+	}
 	_, err = tx.ExecContext(r.Context(), `INSERT INTO bank_payout_instructions(id,organization_id,beneficiary_name,amount_minor,currency,reference,description,created_by,required_approvals,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, org, in.Beneficiary, in.Amount, in.Currency, ref, in.Description, nullable(p.userID), requiredApprovals, status)
+	if err == nil {
+		err = recordRiskOutcome(r.Context(), tx, org, "payout", id, ref, &risk)
+	}
 	if err == nil {
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'bank_payout.created','bank_payout',$4,jsonb_build_object('amount_minor',$5::bigint,'currency',$6::text,'status',$7::text,'required_approvals',$8::integer))`, "aud_"+newID(), org, nullable(p.userID), id, in.Amount, in.Currency, status, requiredApprovals)
 	}
@@ -351,7 +363,7 @@ func (a *App) bankPayouts(w http.ResponseWriter, r *http.Request, org string) {
 		writeJSON(w, 409, problem{Error: "payout creation conflict"})
 		return
 	}
-	writeJSON(w, 201, map[string]any{"id": id, "beneficiary_name": in.Beneficiary, "amount": in.Amount, "currency": in.Currency, "reference": ref, "description": in.Description, "status": status, "approvals_received": 0, "required_approvals": requiredApprovals, "settlement": "not_submitted"})
+	writeJSON(w, 201, map[string]any{"id": id, "beneficiary_name": in.Beneficiary, "amount": in.Amount, "currency": in.Currency, "reference": ref, "description": in.Description, "status": status, "approvals_received": 0, "required_approvals": requiredApprovals, "settlement": "not_submitted", "risk": risk})
 }
 
 func payoutNeedsApproval(amount, threshold int64) bool {

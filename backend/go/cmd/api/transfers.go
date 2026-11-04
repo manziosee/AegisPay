@@ -83,7 +83,17 @@ func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) 
 		if threshold == 0 {
 			threshold, _ = strconv.ParseInt(env("TRANSFER_APPROVAL_THRESHOLD_MINOR", "100000000"), 10, 64)
 		}
-		needsApproval := threshold > 0 && in.Amount >= threshold
+		risk, riskErr := evaluateRisk(r.Context(), tx, org, riskSubject{Kind: "transfer", Amount: in.Amount, Currency: currency, SourceAccountID: in.Source})
+		if riskErr != nil {
+			writeJSON(w, 500, problem{Error: "risk check failed", RequestID: requestID(r)})
+			return
+		}
+		if risk.Decision == "block" {
+			riskBlocked(w, r, risk)
+			return
+		}
+		// A review decision always routes the transfer to a second reviewer.
+		needsApproval := threshold > 0 && in.Amount >= threshold || risk.Decision == "review"
 		state := "completed"
 		httpStatus := 201
 		if needsApproval {
@@ -104,7 +114,10 @@ func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) 
 			writeJSON(w, 409, problem{Error: "transfer could not be created; reference may already exist"})
 			return
 		}
-		if !needsApproval {
+		if err == nil {
+			err = recordRiskOutcome(r.Context(), tx, org, "transfer", id, in.Reference, &risk)
+		}
+		if err == nil && !needsApproval {
 			_, err = tx.ExecContext(r.Context(), `INSERT INTO journal_entries(id,organization_id,reference_type,reference_id,currency,amount_minor) VALUES($1,$2,'transfer',$3,$4,$5)`, entry, org, id, currency, in.Amount)
 			if err == nil {
 				_, err = tx.ExecContext(r.Context(), `INSERT INTO journal_lines(journal_entry_id,organization_id,account_id,side,amount_minor,currency) VALUES($1,$2,$3,'debit',$5,$6),($1,$2,$4,'credit',$5,$6)`, entry, org, in.Source, in.Destination, in.Amount, currency)
@@ -121,7 +134,7 @@ func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) 
 			writeJSON(w, 500, problem{Error: "transfer posting failed"})
 			return
 		}
-		result := map[string]any{"id": id, "status": state, "transfer_type": "internal", "amount": in.Amount, "currency": currency, "reference": in.Reference}
+		result := map[string]any{"id": id, "status": state, "transfer_type": "internal", "amount": in.Amount, "currency": currency, "reference": in.Reference, "risk": risk}
 		if err = storeIdempotency(r.Context(), tx, org, idemKey, httpStatus, result); err != nil {
 			idempotencyFailure(w, r, err)
 			return
