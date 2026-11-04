@@ -28,10 +28,11 @@ import (
 var migrations embed.FS
 
 type App struct {
-	db                *sql.DB
-	redis             *redis.Client
-	orgID, apiKey     string
-	requestsPerMinute int
+	db                   *sql.DB
+	redis                *redis.Client
+	orgID, apiKey        string
+	requestsPerMinute    int
+	registrationsPerHour int
 }
 type problem struct {
 	Error     string `json:"error"`
@@ -80,7 +81,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer redisClient.Close()
-	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key, requestsPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 600, 10, 100000)}
+	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key, requestsPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 600, 10, 100000), registrationsPerHour: envInt("REGISTER_LIMIT_PER_HOUR", 20, 1, 100000)}
 	if err = runMigrations(ctx, db); err != nil {
 		slog.Error("schema migration", "error", err)
 		os.Exit(1)
@@ -263,6 +264,7 @@ func decodeWithLimit(r *http.Request, dst any, limit int) error {
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
 }
+
 // decodeOptional is decode for endpoints whose body may be omitted entirely.
 func decodeOptional(r *http.Request, dst any) error {
 	if err := decode(r, dst); err != nil && !errors.Is(err, io.EOF) {

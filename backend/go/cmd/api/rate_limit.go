@@ -57,7 +57,9 @@ func (a *App) rateLimit(next http.Handler) http.Handler {
 		window := time.Minute
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/auth/register"):
-			limit, window = 5, time.Hour
+			// Many mobile and home networks share one public address across
+			// many people, so the per-IP sign-up allowance is generous.
+			limit, window = a.registrationsPerHour, time.Hour
 		case strings.HasPrefix(r.URL.Path, "/v1/auth/login") || strings.HasPrefix(r.URL.Path, "/v1/auth/mfa/verify-login"):
 			limit, window = 10, time.Minute
 		default:

@@ -292,6 +292,7 @@ Settings read by the Go API. Secrets go in `.env` locally, `fly secrets` on Fly.
 | `TRUSTED_PROXY_CIDRS` | Optional | Load-balancer ranges whose `X-Forwarded-For` is trusted. |
 | `HTTP_ADDR` | Optional | Listen address (default `:8080`). |
 | `RATE_LIMIT_PER_MINUTE` | Optional | Requests per minute for each authenticated credential (default 600). |
+| `REGISTER_LIMIT_PER_HOUR` | Optional | Sign-ups per hour from one client address (default 20). Shared mobile and home networks put many people behind one address. |
 | `FRAUD_SERVICE_URL` | Optional | Fraud scorer URL (default `http://fraud:8090`). Without it, risk analysis returns 503. |
 | `TRANSFER_APPROVAL_THRESHOLD_MINOR` | Optional | Fallback approval threshold when an organization has no policy. |
 | `WEBHOOK_WORKER_CONCURRENCY` / `OUTBOX_BATCH_SIZE` | Optional | Webhook worker pool size (16) and outbox batch size (200). |
