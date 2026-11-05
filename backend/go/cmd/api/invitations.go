@@ -80,6 +80,7 @@ func (a *App) invitations(w http.ResponseWriter, r *http.Request, parts []string
 			writeJSON(w, 409, problem{Error: "invitation could not be created; check for an existing user or invitation"})
 			return
 		}
+		a.emailInvitation(r, org, id, in.Email, in.Role, token)
 		writeJSON(w, 201, map[string]any{"id": id, "email": in.Email, "role": in.Role, "expires_at": expires, "invite_token": token, "delivery": "manual", "warning": "deliver this token to the invitee over a trusted channel; it will not be shown again"})
 		return
 	}

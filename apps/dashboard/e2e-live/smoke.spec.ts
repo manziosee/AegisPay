@@ -247,3 +247,100 @@ test("risk rules, developer tools, sessions and audit integrity work end to end"
     await expect(page.getByText(/Audit trail intact: \d+ records verified/)).toBeVisible();
   });
 });
+
+test("statement files, chat notifications, password reset and invitations work end to end", async ({ page, browser }) => {
+  test.setTimeout(240_000);
+  const id = Date.now().toString(36);
+  const ownerEmail = `owner-${id}@example.com`;
+  const inviteeEmail = `invitee-${id}@example.com`;
+
+  await test.step("owner registers and records a confirmed collection", async () => {
+    await page.goto("/register");
+    await page.getByLabel("Full name").fill("Owner Tester");
+    await page.getByLabel("Organization name").fill(`Batch ${id}`);
+    await page.getByLabel("Country (two-letter code)").fill("NL");
+    await page.getByLabel("Work email").fill(ownerEmail);
+    await page.locator("#register-password").fill("correct-horse-battery");
+    await page.getByRole("button", { name: /Create account/ }).click();
+    await page.waitForURL(/\/app/);
+    await go(page, "Accounts", "Accounts");
+    await page.getByRole("button", { name: "Create account" }).first().click();
+    const form = await dialog(page, "Create a currency account");
+    await form.getByLabel("Currency code").fill("EUR");
+    await form.getByRole("button", { name: "Create account" }).click();
+    await expect(form).toBeHidden();
+    await go(page, "Collections and transfers", "Collections and transfers");
+    await page.getByRole("button", { name: "New collection" }).click();
+    const col = await dialog(page, "Create a collection");
+    await col.getByLabel("Amount").fill("75");
+    await col.getByLabel("Currency").fill("EUR");
+    await col.getByLabel("Reference").fill(`CAMT-${id}`);
+    await col.getByRole("button", { name: "Create collection" }).click();
+    const row = page.getByRole("row", { name: new RegExp(`CAMT-${id}`) });
+    await row.getByRole("button", { name: "Confirm" }).click();
+    await (await dialog(page, "Confirm a collection")).getByRole("button", { name: "Confirm and post" }).click();
+    await expect(row).toContainText(/succeeded/i);
+  });
+
+  await test.step("import a CAMT.053 statement file", async () => {
+    await go(page, "Receive and send money", /send money|receive/i);
+    const camt = `<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt><Ntry><Amt Ccy="EUR">75.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts><BookgDt><Dt>2026-01-15</Dt></BookgDt><NtryDtls><TxDtls><RmtInf><Ustrd>CAMT-${id}</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt></Document>`;
+    await page.locator("#statement-csv").setInputFiles({ name: "statement.xml", mimeType: "application/xml", buffer: Buffer.from(camt) });
+    await expect(page.getByText("CAMT.053 (ISO 20022)").first()).toBeVisible();
+    await page.getByRole("button", { name: "Import statement" }).click();
+    await expect(page.getByText(/Statement imported\. 1 lines matched; 0 need review\./)).toBeVisible();
+  });
+
+  await test.step("add a chat channel and see the platform's answer", async () => {
+    await go(page, "Webhooks", "Webhooks");
+    await page.getByRole("button", { name: "Add channel" }).click();
+    const form = await dialog(page, "Add a chat channel");
+    await form.getByLabel("Chat app").selectOption("discord");
+    await form.getByLabel("Webhook URL").fill("https://discord.com/api/webhooks/1/smoke-test-not-real");
+    await form.getByLabel("Name (optional)").fill("Finance alerts");
+    await form.getByRole("button", { name: "Add and send test" }).click();
+    await expect(page.getByText("Finance alerts")).toBeVisible();
+    await expect(page.getByText(/Last error: Discord returned HTTP/)).toBeVisible();
+  });
+
+  await test.step("invite a teammate who signs up from the link and joins", async () => {
+    await go(page, "Team access", /team/i);
+    const invitation = await page.evaluate(async (address) => {
+      const response = await fetch("/proxy/v1/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Organization-ID": localStorage.getItem("aegispay.organization") ?? "" },
+        body: JSON.stringify({ email: address, role: "auditor" })
+      });
+      return response.json();
+    }, inviteeEmail);
+    expect(invitation.invite_token).toMatch(/^aegis_invite_/);
+    const organization = await page.evaluate(() => localStorage.getItem("aegispay.organization"));
+    const link = `/invite?invitation=${invitation.id}&organization=${organization}&token=${invitation.invite_token}`;
+
+    const invitee = await browser.newPage();
+    await invitee.goto(link);
+    await invitee.getByRole("link", { name: "Create an account" }).click();
+    await invitee.getByLabel("Full name").fill("Invited Auditor");
+    await invitee.getByLabel("Organization name").fill(`Own ${id}`);
+    await invitee.getByLabel("Country (two-letter code)").fill("NL");
+    await invitee.getByLabel("Work email").fill(inviteeEmail);
+    await invitee.locator("#register-password").fill("correct-horse-battery");
+    await invitee.getByRole("button", { name: /Create account/ }).click();
+    await invitee.waitForURL(/\/invite\?/);
+    await invitee.getByRole("button", { name: "Accept invitation" }).click();
+    await invitee.waitForURL(/\/app$/);
+    await expect(invitee.getByRole("button", { name: "Switch workspace" })).toContainText(`Batch ${id}`);
+    await invitee.close();
+  });
+
+  await test.step("forgot password never reveals whether an account exists", async () => {
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByRole("link", { name: "Forgot password?" }).click();
+    await page.getByLabel("Account email").fill(ownerEmail);
+    await page.getByRole("button", { name: "Send reset link" }).click();
+    await expect(page.getByText(/If an account uses .* a reset link is on its way/)).toBeVisible();
+    await page.goto("/reset-password");
+    await expect(page.getByText("This page needs the link from your reset email.")).toBeVisible();
+  });
+});

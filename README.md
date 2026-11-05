@@ -114,6 +114,9 @@ The Kubernetes Kustomize base deploys the same services with single replicas and
 - **Developer tools.** An event log with payloads and delivery counts, event replay to current endpoints, signed `test.ping` deliveries, and webhook signing-secret rotation.
 - **Sessions.** Each user sees their active sessions with device, IP address and last activity, and can sign out one session or every other one.
 - **Tamper-evident audit log.** Each audit row stores the SHA-256 of the previous row's hash plus its own content, and the database refuses updates and deletes. `GET /v1/audit-logs/verify` (and **Verify integrity** in the dashboard) recomputes the chain.
+- **Bank statement files from any bank.** Besides CSV, the API reads the standard formats banks offer for download: CAMT.053 (ISO 20022 XML), MT940 and OFX/QFX. The format is detected automatically.
+- **Team chat notifications.** Approval requests, risk cases and statement results are posted to Slack, Microsoft Teams, Discord or Google Chat through the team's own incoming-webhook link. Links must be on each platform's official host and are stored encrypted.
+- **Email.** Invitations with a one-click accept link, password reset (one-time, one-hour links that sign out every session), and approval requests to the people who can approve, all sent through Brevo. Without `BREVO_API_KEY`, emails are logged instead of sent.
 - Personal and business workspaces can use bank-file receive/send records without connecting a payment provider. AegisPay is the workflow and evidence layer; each user's bank remains responsible for moving funds.
 
 ## Run locally
@@ -298,6 +301,9 @@ Settings read by the Go API. Secrets go in `.env` locally, `fly secrets` on Fly.
 | `WEBHOOK_WORKER_CONCURRENCY` / `OUTBOX_BATCH_SIZE` | Optional | Webhook worker pool size (16) and outbox batch size (200). |
 | `IDEMPOTENCY_RETENTION_HOURS` / `SESSION_RETENTION_DAYS` / `MAINTENANCE_INTERVAL_MINUTES` | Optional | Retention and cleanup cadence (24 h, 30 days, 60 min). |
 | `SWAGGER_ORIGIN` | Optional | Origin allowed by CORS for a separately hosted Swagger UI. |
+| `DASHBOARD_URL` | For email | Public dashboard address used in email links (for example `https://aegispays.netlify.app`). |
+| `BREVO_API_KEY` | For email | Brevo API key with transactional email permission (free plan: 300 emails a day). |
+| `EMAIL_FROM` / `EMAIL_FROM_NAME` | For email | Verified Brevo sender address and display name. |
 
 The dashboard reads `API_PROXY_TARGET`, `TRUSTED_PROXY_SECRET`, `CLIENT_IP_HEADER` and `TRUSTED_PROXY_HOPS`; see [Dashboard on Netlify](#dashboard-on-netlify).
 

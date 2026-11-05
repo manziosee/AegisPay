@@ -141,8 +141,8 @@ export const workspaceNav: NavItem[] = [
     label: "Webhooks",
     icon: Webhook,
     group: "Developers",
-    description: "Endpoints, delivery attempts and retries",
-    keywords: "events deliveries signature",
+    description: "Chat notifications, endpoints, deliveries and retries",
+    keywords: "events deliveries signature slack teams discord google chat notifications",
     visible: (role) => isAdmin(role) || role === "developer"
   },
   {

@@ -235,6 +235,12 @@ func roleAllows(p principal, r *http.Request) bool {
 		}
 	case "reconciliation":
 		scope = "reconciliation.manage"
+	case "notification-channels":
+		if r.Method == http.MethodGet {
+			scope = "webhooks.read"
+		} else {
+			scope = "webhooks.manage"
+		}
 	case "events":
 		if r.Method == http.MethodGet {
 			scope = "webhooks.read"

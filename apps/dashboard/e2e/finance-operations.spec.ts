@@ -38,12 +38,12 @@ test("business staff create requests and import bank statements without claiming
   await expect(page.getByText("AR-TEST-1")).toBeVisible();
   await expect(page.getByText(/No funds have been received/)).toBeVisible();
 
-  await page.getByLabel("Statement CSV").setInputFiles({
+  await page.getByLabel("Statement file").setInputFiles({
     name: "statement.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("reference,amount,currency,date\nAR-TEST-1,125.00,USD,2026-03-19\n")
   });
-  await expect(page.getByText(/statement\.csv · 1 data lines/)).toBeVisible();
+  await expect(page.getByText(/statement\.csv · CSV/)).toBeVisible();
   await page.getByRole("button", { name: "Import statement" }).click();
   await expect(page.getByText(/Statement imported\. 1 lines matched/)).toBeVisible();
   expect(csvImport?.source_name).toBe("statement.csv");

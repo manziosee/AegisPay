@@ -363,6 +363,9 @@ func (a *App) bankPayouts(w http.ResponseWriter, r *http.Request, org string) {
 		writeJSON(w, 409, problem{Error: "payout creation conflict"})
 		return
 	}
+	if status == "pending_approval" {
+		a.emailApprovers(r, org, p.userID, "payout", formatMinorAmount(in.Amount, in.Currency), ref, "/app/money")
+	}
 	writeJSON(w, 201, map[string]any{"id": id, "beneficiary_name": in.Beneficiary, "amount": in.Amount, "currency": in.Currency, "reference": ref, "description": in.Description, "status": status, "approvals_received": 0, "required_approvals": requiredApprovals, "settlement": "not_submitted", "risk": risk})
 }
 

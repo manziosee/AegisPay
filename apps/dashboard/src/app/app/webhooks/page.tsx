@@ -17,6 +17,7 @@ import {
 import { useSession } from "@/components/providers/session-provider";
 import { WebhookEndpointManager } from "@/components/webhooks/endpoint-manager";
 import { EventsPanel } from "@/components/webhooks/events-panel";
+import { NotificationChannels } from "@/components/webhooks/notification-channels";
 import { api, errorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { Page, WebhookDelivery, WebhookEndpoint } from "@/lib/types";
@@ -96,6 +97,7 @@ export default function WebhooksPage() {
         description="Inspect delivery attempts and HTTP outcomes. Payload bodies are not exposed by this API version; retries preserve the attempt history."
       />
 
+      <NotificationChannels />
       <WebhookEndpointManager endpoints={endpoints} onChange={load} />
 
       <Panel>

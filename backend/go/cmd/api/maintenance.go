@@ -35,6 +35,7 @@ func (a *App) maintenancePass(ctx context.Context) {
 	}{
 		{"idempotency_records", `DELETE FROM idempotency_records WHERE ctid IN (SELECT ctid FROM idempotency_records WHERE created_at < now() - make_interval(hours => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, idempotencyHours},
 		{"mfa_login_challenges", `DELETE FROM mfa_login_challenges WHERE ctid IN (SELECT ctid FROM mfa_login_challenges WHERE expires_at < now() - make_interval(hours => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, 0},
+		{"password_reset_tokens", `DELETE FROM password_reset_tokens WHERE ctid IN (SELECT ctid FROM password_reset_tokens WHERE created_at < now() - make_interval(days => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, 7},
 		{"user_sessions", `DELETE FROM user_sessions WHERE ctid IN (SELECT ctid FROM user_sessions WHERE (expires_at < now() - make_interval(days => $1)) OR (revoked_at < now() - make_interval(days => $1)) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, sessionDays},
 	}
 	for _, sweep := range sweeps {
@@ -55,14 +56,15 @@ func (a *App) maintenancePass(ctx context.Context) {
 			slog.Info("maintenance sweep", "table", sweep.name, "deleted", total)
 		}
 	}
-	a.reencryptSecrets(ctx, "webhook_endpoints", "id", purposeWebhookSecret)
-	a.reencryptSecrets(ctx, "user_mfa_factors", "user_id", purposeMFASecret)
+	a.reencryptSecrets(ctx, "webhook_endpoints", "id", "secret_ciphertext", purposeWebhookSecret)
+	a.reencryptSecrets(ctx, "user_mfa_factors", "user_id", "secret_ciphertext", purposeMFASecret)
+	a.reencryptSecrets(ctx, "notification_channels", "id", "url_ciphertext", purposeChannelURL)
 }
 
 // reencryptSecrets re-seals ciphertexts that were not written by the active
 // key (pre-versioning rows, or rows under a key being retired). Once a sweep
 // reports nothing left, the old key can be removed from ENCRYPTION_KEYS.
-func (a *App) reencryptSecrets(ctx context.Context, table, keyColumn, purpose string) {
+func (a *App) reencryptSecrets(ctx context.Context, table, keyColumn, column, purpose string) {
 	ring, err := loadKeyRing()
 	if err != nil {
 		return
@@ -77,7 +79,7 @@ func (a *App) reencryptSecrets(ctx context.Context, table, keyColumn, purpose st
 		}
 		// Rows that cannot be opened are skipped by offset so they do not
 		// block the rest of the table.
-		rows, err := tx.QueryContext(ctx, `SELECT `+keyColumn+`,secret_ciphertext FROM `+table+` WHERE substring(secret_ciphertext from 1 for $1) IS DISTINCT FROM $2 ORDER BY `+keyColumn+` OFFSET $3 LIMIT 200 FOR UPDATE SKIP LOCKED`, len(header), header, failed)
+		rows, err := tx.QueryContext(ctx, `SELECT `+keyColumn+`,`+column+` FROM `+table+` WHERE substring(`+column+` from 1 for $1) IS DISTINCT FROM $2 ORDER BY `+keyColumn+` OFFSET $3 LIMIT 200 FOR UPDATE SKIP LOCKED`, len(header), header, failed)
 		if err != nil {
 			_ = tx.Rollback()
 			slog.Error("secret re-encryption", "table", table, "error", err)
@@ -108,7 +110,7 @@ func (a *App) reencryptSecrets(ctx context.Context, table, keyColumn, purpose st
 			}
 			sealed, err := ring.seal(purpose, plain)
 			if err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE `+table+` SET secret_ciphertext=$2 WHERE `+keyColumn+`=$1`, item.id, sealed)
+				_, err = tx.ExecContext(ctx, `UPDATE `+table+` SET `+column+`=$2 WHERE `+keyColumn+`=$1`, item.id, sealed)
 			}
 			if err != nil {
 				failed++

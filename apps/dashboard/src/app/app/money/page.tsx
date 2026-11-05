@@ -16,6 +16,18 @@ import { api, apiBlob, apiIdempotent, downloadBlob, errorMessage } from "@/lib/a
 import { formatDate, formatMinor, majorToMinor, minorHint } from "@/lib/format";
 import type { BankPayout, BankRequest, Page } from "@/lib/types";
 
+// Bank statement formats the API can import. CSV uses the column-mapping
+// importer; the standard formats are detected from their content.
+const STATEMENT_EXTENSIONS = [".csv", ".xml", ".camt", ".053", ".sta", ".mt940", ".940", ".txt", ".ofx", ".qfx"];
+
+function statementFormat(name: string, content: string): string {
+  const head = content.slice(0, 4096);
+  if (head.includes("BkToCstmrStmt") || head.includes("camt.053")) return "CAMT.053 (ISO 20022)";
+  if (head.includes("OFXHEADER") || head.toUpperCase().includes("<OFX>")) return "OFX";
+  if (head.includes(":20:") && (content.includes(":61:") || content.includes(":60F:"))) return "MT940";
+  return name.toLowerCase().endsWith(".csv") ? "CSV" : "Unrecognised format";
+}
+
 export default function MoneyPage() {
   const { session } = useSession();
   const { refresh } = useWorkspaceData();
@@ -122,14 +134,14 @@ export default function MoneyPage() {
     setCSV("");
     setFileName("");
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Choose a CSV statement file.");
+    if (!STATEMENT_EXTENSIONS.some((extension) => file.name.toLowerCase().endsWith(extension))) {
+      toast.error("Choose a bank statement file: CSV, CAMT.053 (XML), MT940 or OFX/QFX.");
       return;
     }
     try {
       const text = await file.text();
-      if (!text.trim() || text.length > 1024 * 1024) {
-        toast.error("Choose a non-empty CSV file no larger than 1 MiB.");
+      if (!text.trim() || text.length > 3 * 1024 * 1024) {
+        toast.error("Choose a non-empty statement file no larger than 3 MiB.");
         return;
       }
       setFileName(file.name);
@@ -143,9 +155,10 @@ export default function MoneyPage() {
     if (!session || !csv || !fileName) return;
     setStatementBusy(true);
     try {
+      const isCsv = statementFormat(fileName, csv) === "CSV";
       const result = await apiIdempotent<{ id: string; matched_count: number; exception_count: number }>(
-        "/reconciliation/imports/csv",
-        { source_name: fileName, csv }
+        isCsv ? "/reconciliation/imports/csv" : "/reconciliation/imports/file",
+        isCsv ? { source_name: fileName, csv } : { source_name: fileName, format: "auto", content: csv }
       );
       setCSV("");
       setFileName("");
@@ -548,36 +561,34 @@ export default function MoneyPage() {
       <Panel id="statement" className="mt-4 scroll-mt-24">
         <PanelHeader
           title="Import a bank statement"
-          description="CSV columns: reference, amount (major units) or amount_minor, currency, and optional date/provider_fee."
+          description="Standard bank formats (CAMT.053 XML, MT940, OFX/QFX) are read automatically. For CSV, use columns reference, amount or amount_minor, currency, and optional date and provider_fee."
         />
         <div className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-end">
           <div className="space-y-2">
-            <Label htmlFor="statement-csv">Statement CSV</Label>
+            <Label htmlFor="statement-csv">Statement file</Label>
             <label
               htmlFor="statement-csv"
               className="flex h-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-paper text-center transition-colors hover:bg-paper-muted/70"
             >
               <Upload className="size-4 text-ink-400" />
               <span className="text-[11.5px] text-ink-500">
-                {fileName || "Choose a CSV file (max 1 MiB)"}
+                {fileName || "Choose a statement: CSV, CAMT.053, MT940 or OFX (max 3 MiB)"}
               </span>
               {fileName && csv && (
-                <span className="font-mono text-[10px] text-ink-400">
-                  {csv.split(/\r\n|\r|\n/).filter(Boolean).length - 1} data lines
-                </span>
+                <span className="font-mono text-[10px] text-ink-400">{statementFormat(fileName, csv)}</span>
               )}
               <input
                 id="statement-csv"
                 type="file"
-                accept=".csv,text/csv"
+                accept={STATEMENT_EXTENSIONS.join(",")}
                 className="sr-only"
                 onChange={(event) => void chooseFile(event.target.files?.[0])}
               />
             </label>
             <p className="text-[10.5px] text-ink-400">
               {fileName
-                ? `${fileName} · ${csv.split(/\r\n|\r|\n/).filter(Boolean).length - 1} data lines`
-                : "Matching references confirm receipt only when the imported statement agrees."}
+                ? `${fileName} · ${statementFormat(fileName, csv)}`
+                : "Download the statement from your online banking in any of these formats. Matching references confirm receipt only when the statement agrees."}
             </p>
           </div>
           <Button

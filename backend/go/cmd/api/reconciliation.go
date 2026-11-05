@@ -9,6 +9,10 @@ import (
 
 func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []string) {
 	org := currentOrgID(r, a.orgID)
+	if len(parts) == 3 && parts[1] == "imports" && parts[2] == "file" && r.Method == http.MethodPost {
+		a.importStatementFile(w, r)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "imports" && parts[2] == "csv" && r.Method == http.MethodPost {
 		a.importStatementCSV(w, r)
 		return

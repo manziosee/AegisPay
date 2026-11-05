@@ -143,13 +143,7 @@ func parseStatementAmount(minor, major, currency string, hasMinor bool) (int64, 
 	if !ok {
 		return 0, fmt.Errorf("invalid decimal amount")
 	}
-	digits := 2
-	switch currency {
-	case "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF":
-		digits = 0
-	case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND":
-		digits = 3
-	}
+	digits := currencyMinorDigits(currency)
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(digits)), nil)
 	value.Mul(value, new(big.Rat).SetInt(scale))
 	if !value.IsInt() || !value.Num().IsInt64() {
@@ -165,4 +159,18 @@ func parseStatementDate(value string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("invalid date")
+}
+
+// currencyMinorDigits is the number of minor-unit decimals for an ISO 4217
+// currency; most currencies use two.
+func currencyMinorDigits(currency string) int {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF":
+		return 0
+	case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND":
+		return 3
+	case "CLF", "UYW":
+		return 4
+	}
+	return 2
 }

@@ -77,6 +77,24 @@ paths:
       summary: Inspect current organization and role
       description: For user sessions the response also includes full_name, email and the session expires_at.
       responses: {'200': {description: Authenticated principal}}
+  /v1/auth/password/forgot:
+    post:
+      security: []
+      summary: Email a one-time password reset link
+      description: 'Always answers 202, whether or not the email is registered, so accounts cannot be discovered. The link expires after one hour. Limited per email address and per client address.'
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [email], properties: {email: {type: string, format: email}}}}}
+      responses: {'202': {description: Accepted}, '429': {description: Too many attempts}}
+  /v1/auth/password/reset:
+    post:
+      security: []
+      summary: Set a new password with a reset token
+      description: The token works once. Every existing session of the user is signed out.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [token, password], properties: {token: {type: string}, password: {type: string, minLength: 12, maxLength: 72}}}}}
+      responses: {'200': {description: Password changed}, '400': {description: 'Invalid, expired or used token, or invalid password'}}
   /v1/auth/organizations:
     get:
       summary: List the workspaces the signed-in user can switch to
@@ -412,6 +430,15 @@ paths:
                 source_name: {type: string}
                 csv: {type: string}
       responses: {'201': {description: Imported with match and exception counts}, '400': {$ref: '#/components/responses/BadRequest'}, '409': {description: Statement date falls in a closed period}}
+  /v1/reconciliation/imports/file:
+    post:
+      summary: Import a bank statement file (CAMT.053, MT940 or OFX/QFX)
+      description: 'The format is detected from the content when format is auto. Booked entries are imported; the reference comes from remittance information (CAMT), the :61: customer reference or :86: details (MT940), or REFNUM, MEMO or NAME (OFX).'
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [content], properties: {source_name: {type: string}, format: {type: string, enum: [auto, camt053, mt940, ofx], default: auto}, content: {type: string, description: 'Statement file contents, up to 4 MiB'}}}}}
+      responses: {'201': {description: Import created with matched and exception counts}, '400': {description: Unrecognised or invalid statement}}
   /v1/reconciliation/imports/{id}:
     get:
       summary: Retrieve imported statement lines and match results, including line IDs for resolution
@@ -561,6 +588,27 @@ paths:
       description: The previous secret stops working immediately; the new secret is returned once.
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: New signing secret}}
+  /v1/notification-channels:
+    get:
+      summary: List team chat notification channels
+      responses: {'200': {description: 'Channels with a masked link, events and last delivery result'}}
+    post:
+      summary: Add a Slack, Microsoft Teams, Discord or Google Chat channel
+      description: The link must be an incoming-webhook URL on the platform's official host. It is stored encrypted and only a masked hint is returned.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [kind, url], properties: {kind: {type: string, enum: [slack, teams, discord, google_chat]}, name: {type: string, maxLength: 80}, url: {type: string}, events: {type: array, items: {type: string}}}}}}
+      responses: {'201': {description: Channel added}, '400': {description: Invalid link or event}}
+  /v1/notification-channels/{id}/test:
+    post:
+      summary: Send a test message to a chat channel
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Delivered}, '502': {description: "The chat platform refused the message; the error explains why"}}
+  /v1/notification-channels/{id}:
+    delete:
+      summary: Remove a chat channel
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Removed}}
   /v1/events:
     get:
       summary: List the organization's events with payloads and delivery counts

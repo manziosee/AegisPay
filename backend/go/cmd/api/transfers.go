@@ -143,6 +143,9 @@ func (a *App) transfers(w http.ResponseWriter, r *http.Request, parts []string) 
 			writeJSON(w, 409, problem{Error: "transfer conflict; retry safely"})
 			return
 		}
+		if needsApproval {
+			a.emailApprovers(r, org, actor.userID, "transfer", formatMinorAmount(in.Amount, currency), in.Reference, "/app/approvals")
+		}
 		writeJSON(w, httpStatus, result)
 		return
 	}

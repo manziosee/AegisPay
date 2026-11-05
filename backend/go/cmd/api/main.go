@@ -33,6 +33,7 @@ type App struct {
 	orgID, apiKey        string
 	requestsPerMinute    int
 	registrationsPerHour int
+	mail                 *mailer
 }
 type problem struct {
 	Error     string `json:"error"`
@@ -81,7 +82,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer redisClient.Close()
-	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key, requestsPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 600, 10, 100000), registrationsPerHour: envInt("REGISTER_LIMIT_PER_HOUR", 20, 1, 100000)}
+	a := &App{db: db, redis: redisClient, orgID: org, apiKey: key, requestsPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 600, 10, 100000), registrationsPerHour: envInt("REGISTER_LIMIT_PER_HOUR", 20, 1, 100000), mail: newMailer()}
 	if err = runMigrations(ctx, db); err != nil {
 		slog.Error("schema migration", "error", err)
 		os.Exit(1)
@@ -101,6 +102,10 @@ func main() {
 	_ = loadClientIPConfig()
 	go a.runOutboxWorker(context.Background())
 	go a.runMaintenance(context.Background())
+	go a.runNotificationWorker(context.Background())
+	if !a.mail.configured() {
+		slog.Warn("email is not configured (BREVO_API_KEY, EMAIL_FROM); invitation, password reset and approval emails are logged only")
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /health/ready", a.ready)
@@ -110,6 +115,8 @@ func main() {
 	mux.HandleFunc("POST /v1/auth/register", a.register)
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("POST /v1/auth/mfa/verify-login", a.verifyMFALogin)
+	mux.HandleFunc("POST /v1/auth/password/forgot", a.forgotPassword)
+	mux.HandleFunc("POST /v1/auth/password/reset", a.resetPassword)
 	mux.Handle("/v1/", a.authenticate(http.HandlerFunc(a.route)))
 	addr := env("HTTP_ADDR", ":8080")
 	server := &http.Server{Addr: addr, Handler: requestIDs(securityHeaders(metrics(cors(a.rateLimit(mux))))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
@@ -371,6 +378,8 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		a.riskRules(w, r, seg)
 	case "events":
 		a.events(w, r, seg)
+	case "notification-channels":
+		a.notificationChannels(w, r, seg)
 	case "reports":
 		if r.Method == "GET" && len(seg) == 2 && seg[1] == "transactions" {
 			a.transactionReport(w, r)

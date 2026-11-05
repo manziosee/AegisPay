@@ -130,5 +130,71 @@ if os.environ.get("AEGIS_API_KEY"):
     s, boot = call("GET", "/v1/audit-logs/verify", os.environ["AEGIS_API_KEY"])
     ok("bootstrap organization audit chain verifies", s == 200 and boot["valid"] is True, (s, boot))
 
+
+# --- statement files: CAMT.053, MT940, OFX ---------------------------------
+def run_sql(query):
+    """Runs SQL when the test has database access (CI: psql, local: docker)."""
+    if os.environ.get("AUDIT_PSQL_URL"):
+        out = subprocess.run(["psql", os.environ["AUDIT_PSQL_URL"], "-tAc", query], capture_output=True, text=True)
+    elif os.environ.get("PG_CONTAINER"):
+        out = subprocess.run(["docker", "exec", os.environ["PG_CONTAINER"], "psql", "-U", "postgres", "-d", os.environ.get("PG_DATABASE", "aegis"), "-tAc", query], capture_output=True, text=True)
+    else:
+        return None
+    return out.stdout.strip()
+
+s, a3 = call("POST", "/v1/accounts", t, {"currency": "GBP"})
+refs = {}
+for kind in ("camt", "mt940", "ofx"):
+    r = f"{kind.upper()}-" + uuid.uuid4().hex[:6].upper()
+    s, col = call("POST", "/v1/collections", t, {"amount": 120050, "currency": "GBP", "reference": r}, idem=True)
+    call("POST", f"/v1/collections/{col['id']}/sandbox-confirm", t, {"account_id": a3["id"]}, idem=True)
+    refs[kind] = r
+camt = f"""<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt>
+<Ntry><Amt Ccy="GBP">1200.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts><BookgDt><Dt>2026-01-20</Dt></BookgDt>
+<NtryDtls><TxDtls><RmtInf><Ustrd>{refs['camt']}</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt></Document>"""
+mt940 = f":20:S1\n:25:GB00TEST\n:28C:1/1\n:60F:C260119GBP0,00\n:61:2601200120C1200,50NTRFNONREF//B1\n:86:{refs['mt940']}\n:62F:C260120GBP1200,50\n-"
+ofx = f"OFXHEADER:100\nDATA:OFXSGML\n\n<OFX><STMTRS><CURDEF>GBP<BANKTRANLIST><STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260120<TRNAMT>1200.50<FITID>X1<MEMO>{refs['ofx']}</STMTTRN></BANKTRANLIST></STMTRS></OFX>"
+for kind, content in (("camt", camt), ("mt940", mt940), ("ofx", ofx)):
+    s, imp = call("POST", "/v1/reconciliation/imports/file", t, {"source_name": f"bank.{kind}", "format": "auto", "content": content}, idem=True)
+    ok(f"{kind} statement file matches its collection", s == 201 and imp.get("matched_count") == 1 and imp.get("exception_count") == 0, (s, imp))
+s, bad_file = call("POST", "/v1/reconciliation/imports/file", t, {"content": "not a statement"}, idem=True)
+ok("unrecognised statement file refused", s == 400, (s, bad_file))
+
+# --- password reset --------------------------------------------------------
+s, fp = call("POST", "/v1/auth/password/forgot", b={"email": email})
+s2, fp2 = call("POST", "/v1/auth/password/forgot", b={"email": f"nobody-{uuid.uuid4().hex[:6]}@example.com"})
+ok("forgot password answers the same for known and unknown emails", s == 202 and s2 == 202 and fp == fp2, (s, fp, s2, fp2))
+token = "aegis_reset_" + uuid.uuid4().hex
+import hashlib
+inserted = run_sql(f"INSERT INTO password_reset_tokens(token_hash,user_id,expires_at) SELECT '{hashlib.sha256(token.encode()).hexdigest()}',id,now()+interval '1 hour' FROM users WHERE email='{email}' RETURNING 1")
+if inserted is not None:
+    s, short = call("POST", "/v1/auth/password/reset", b={"token": token, "password": "short"})
+    ok("reset refuses a short password", s == 400, (s, short))
+    s, done = call("POST", "/v1/auth/password/reset", b={"token": token, "password": "a-brand-new-password"})
+    ok("reset with a valid token changes the password", s == 200, (s, done))
+    s, _ = call("GET", "/v1/auth/me", t)
+    ok("reset signs out existing sessions", s == 401, s)
+    s, again = call("POST", "/v1/auth/password/reset", b={"token": token, "password": "another-new-password"})
+    ok("reset token works only once", s == 400, (s, again))
+    s, L = call("POST", "/v1/auth/login", b={"email": email, "password": "a-brand-new-password"})
+    ok("sign in with the new password", s == 200, (s, L))
+    t = L["access_token"]
+
+# --- team chat channels -----------------------------------------------------
+s, bad_channel = call("POST", "/v1/notification-channels", t, {"kind": "slack", "url": "https://evil.example.com/services/x"})
+ok("chat channel refuses a non-Slack link", s == 400, (s, bad_channel))
+s, ch = call("POST", "/v1/notification-channels", t, {"kind": "discord", "name": "Finance", "url": "https://discord.com/api/webhooks/1/integration-test-not-real"})
+ok("chat channel saved with a masked link", s == 201 and "integration-test" not in json.dumps(ch), (s, ch))
+s, lst = call("GET", "/v1/notification-channels", t)
+ok("chat channels list default events", s == 200 and len(lst["data"]) == 1 and "transfer.approval_required" in lst["data"][0]["events"], (s, lst))
+s, test = call("POST", f"/v1/notification-channels/{ch['id']}/test", t)
+ok("test message to an invalid webhook reports the platform's error", s == 502 and "Discord" in test.get("error", ""), (s, test))
+s, d = call("DELETE", f"/v1/notification-channels/{ch['id']}", t)
+ok("remove chat channel", s == 200, (s, d))
+
+# --- invitation and approval emails (logged when no email provider) -------
+s, inv = call("POST", "/v1/invitations", t, {"email": f"invitee-{uuid.uuid4().hex[:6]}@example.com", "role": "auditor"})
+ok("invitation still returns its one-time token", s == 201 and inv.get("invite_token", "").startswith("aegis_invite_"), (s, inv))
+
 print(f"\n{sum(results)}/{len(results)} checks passed")
 sys.exit(0 if all(results) else 1)

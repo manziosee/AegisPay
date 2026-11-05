@@ -16,6 +16,9 @@ primary_region = 'cdg'
   # Fly's edge overwrites this header with the real client address.
   TRUSTED_CLIENT_IP_HEADER = 'Fly-Client-IP'
   SWAGGER_ORIGIN = 'https://aegispay.fly.dev'
+  # Public dashboard address used in email links.
+  DASHBOARD_URL = 'https://aegispays.netlify.app'
+  EMAIL_FROM_NAME = 'AegisPay'
 
 [http_service]
   internal_port = 8080
