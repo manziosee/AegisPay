@@ -377,7 +377,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         )}
 
         <EmailBanner />
-        <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:py-7">
+        <main className="mx-auto w-full max-w-[1440px] px-4 pb-28 pt-6 sm:px-6 lg:pt-7">
           {children}
         </main>
       </div>
