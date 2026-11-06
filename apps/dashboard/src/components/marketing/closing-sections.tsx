@@ -1,3 +1,4 @@
+import { LegalLinks } from "@/components/legal/legal-page";
 import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -84,7 +85,7 @@ export function CtaSection() {
             className="h-11 rounded-lg bg-primary px-5 text-[13.5px] font-semibold text-primary-foreground hover:bg-primary/90"
           >
             <Link href="/register">
-              Create sandbox account
+              Create free account
               <ArrowRight className="size-4" />
             </Link>
           </Button>
@@ -124,7 +125,7 @@ const footerColumns = [
     heading: "Account",
     links: [
       { label: "Sign in", href: "/login" },
-      { label: "Create sandbox account", href: "/register" },
+      { label: "Create free account", href: "/register" },
       { label: "Sandbox boundaries", href: "/#sandbox" },
       { label: "Repository", href: "https://github.com/manziosee/AegisPay" }
     ]
@@ -139,7 +140,7 @@ export function SiteFooter() {
           <div>
             <Wordmark size="md" />
             <p className="mt-4 max-w-[300px] text-[12.5px] leading-relaxed text-on-night-muted">
-              Ledger, risk and approval records for business payment operations. Sandbox only.
+              Ledger, risk and approval records for business payment operations. Your bank moves the money; AegisPay keeps the proof.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
@@ -171,9 +172,7 @@ export function SiteFooter() {
           <span className="text-[11px] text-on-night-muted/60">
             © {new Date().getFullYear()} AegisPay
           </span>
-          <span className="text-[11px] text-on-night-muted/60">
-            Simulated ledger activity · no live payment provider
-          </span>
+          <LegalLinks className="text-[11px] text-on-night-muted/80" />
         </div>
       </div>
     </footer>

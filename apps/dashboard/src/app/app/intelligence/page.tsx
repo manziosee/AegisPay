@@ -170,7 +170,7 @@ export default function IntelligencePage() {
     <div>
       <PageHeader
         title="Risk review"
-        description="Evaluate a transaction reference, read the stored assessment and investigate review cases. Scores come from the fraud service; extra signals are derived from loaded workspace records."
+        description="Evaluate a transaction reference, read the stored assessment and investigate review cases. Decisions come from your risk rules; extra signals are derived from loaded workspace records."
       />
 
       <Tabs defaultValue="evaluation">
@@ -192,7 +192,7 @@ export default function IntelligencePage() {
                 <PanelHeader
                   title="Evaluate a transaction"
                   description="POST /v1/fraud/analyze"
-                  action={<StatusBadge status="preview" label="Sandbox" tone="info" />}
+                  action={<StatusBadge status="preview" label="Your risk rules" tone="info" />}
                 />
                 <form onSubmit={evaluate} className="space-y-4 p-5">
                   <div className="space-y-2">
@@ -357,9 +357,11 @@ export default function IntelligencePage() {
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-[11px] text-ink-400">Mode</dt>
-                            <dd className="mt-0.5 font-mono text-[11px] text-ink-800">
-                              {assessment.mode}
+                            <dt className="text-[11px] text-ink-400">Rules matched</dt>
+                            <dd className="mt-0.5 text-[11px] text-ink-800">
+                              {assessment.matched_rules?.length
+                                ? assessment.matched_rules.map((rule) => `${rule.name} (${rule.action}): ${rule.reason}`).join(" · ")
+                                : "None. Add rules on the Risk rules page."}
                             </dd>
                           </div>
                           <div>

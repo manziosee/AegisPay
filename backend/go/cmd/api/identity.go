@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -89,7 +90,7 @@ func (a *App) apiKeyPrincipal(r *http.Request, token string) (principal, bool) {
 	var scopesJSON []byte
 	var expires sql.NullTime
 	err := a.db.QueryRowContext(r.Context(), `SELECT id,organization_id,secret_hash,environment,scopes,expires_at FROM api_keys WHERE key_prefix=$1 AND revoked_at IS NULL`, prefix).Scan(&id, &org, &secret, &environment, &scopesJSON, &expires)
-	if err != nil || environment != "sandbox" || expires.Valid && time.Now().After(expires.Time) {
+	if err != nil || (environment != "sandbox" && environment != "live") || expires.Valid && time.Now().After(expires.Time) {
 		return principal{}, false
 	}
 	got := tokenHash(token)
@@ -146,6 +147,9 @@ func roleAllows(p principal, r *http.Request) bool {
 			return p.sessionID != ""
 		}
 		if len(parts) >= 2 && parts[1] == "sessions" {
+			return p.sessionID != ""
+		}
+		if len(parts) == 3 && (parts[1] == "email" || parts[1] == "account") {
 			return p.sessionID != ""
 		}
 	case "organizations":
@@ -235,6 +239,9 @@ func roleAllows(p principal, r *http.Request) bool {
 		}
 	case "reconciliation":
 		scope = "reconciliation.manage"
+	case "onboarding", "feedback":
+		// Handlers check the session and, for changes, the role.
+		return p.sessionID != ""
 	case "notification-channels":
 		if r.Method == http.MethodGet {
 			scope = "webhooks.read"
@@ -308,6 +315,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		Password         string `json:"password"`
 		FullName         string `json:"full_name"`
 		CountryCode      string `json:"country_code"`
+		AcceptedTerms    bool   `json:"accepted_terms"`
 	}
 	if decode(r, &in) != nil || strings.TrimSpace(in.FullName) == "" || !strings.Contains(in.Email, "@") || len(in.Password) < 12 || len(in.Password) > 72 {
 		bad(w, r, "full_name, valid email, and password (12-72 bytes) are required")
@@ -350,7 +358,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(r.Context(), `INSERT INTO organizations(id,name,slug,country_code,workspace_type) VALUES($1,$2,$3,upper($4),$5)`, orgID, in.OrganizationName, slug, in.CountryCode, in.WorkspaceType); err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO users(id,email,password_hash,full_name) VALUES($1,$2,$3,$4)`, userID, in.Email, string(pw), in.FullName)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO users(id,email,password_hash,full_name,terms_accepted_at) VALUES($1,$2,$3,$4,CASE WHEN $5::boolean THEN now() END)`, userID, in.Email, string(pw), in.FullName, in.AcceptedTerms)
 	}
 	if err == nil {
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO memberships(id,organization_id,user_id,role) VALUES($1,$2,$3,'owner')`, "mem_"+newID(), orgID, userID)
@@ -367,6 +375,9 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	if err = tx.Commit(); err != nil {
 		writeJSON(w, 409, problem{Error: "registration conflict", RequestID: requestID(r)})
 		return
+	}
+	if verifyErr := a.sendVerificationEmail(r.Context(), userID, in.Email, in.FullName); verifyErr != nil {
+		slog.Warn("verification email could not be prepared", "error", verifyErr)
 	}
 	writeJSON(w, 201, map[string]any{"user_id": userID, "organization_id": orgID, "organization_name": in.OrganizationName, "workspace_type": in.WorkspaceType, "role": "owner", "access_token": token, "token_type": "Bearer", "expires_at": expires})
 }
@@ -469,13 +480,17 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 			bad(w, r, "name is required")
 			return
 		}
-		if in.Environment == "" {
-			in.Environment = "sandbox"
-		}
-		if in.Environment != "sandbox" {
-			writeJSON(w, 403, problem{Error: "live credentials are disabled", RequestID: requestID(r)})
+		// A key's environment always follows its workspace.
+		workspaceEnvironment, envErr := organizationEnvironment(r.Context(), a.db, org)
+		if envErr != nil {
+			writeJSON(w, 500, problem{Error: "workspace could not be loaded", RequestID: requestID(r)})
 			return
 		}
+		if in.Environment != "" && in.Environment != workspaceEnvironment {
+			writeJSON(w, 403, problem{Error: "API keys use the environment of their workspace (" + workspaceEnvironment + ")", RequestID: requestID(r)})
+			return
+		}
+		in.Environment = workspaceEnvironment
 		if in.ExpiresAt != nil && (!in.ExpiresAt.After(time.Now()) || in.ExpiresAt.After(time.Now().AddDate(5, 0, 0))) {
 			bad(w, r, "expires_at must be in the future and within five years")
 			return
@@ -489,16 +504,16 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 				return
 			}
 		}
-		token := "aegis_test_" + newID()
+		token := apiKeyPrefix(in.Environment) + newID()
 		id := "key_" + newID()
 		prefix := token[:23]
 		p := principalFrom(r)
-		_, err := a.db.ExecContext(r.Context(), `INSERT INTO api_keys(id,organization_id,name,key_prefix,secret_hash,environment,scopes,created_by,expires_at) VALUES($1,$2,$3,$4,$5,'sandbox',$6,$7,$8)`, id, org, in.Name, prefix, tokenHash(token), string(mustJSON(in.Scopes)), nullable(p.userID), nullableExpiry(in.ExpiresAt))
+		_, err := a.db.ExecContext(r.Context(), `INSERT INTO api_keys(id,organization_id,name,key_prefix,secret_hash,environment,scopes,created_by,expires_at) VALUES($1,$2,$3,$4,$5,$9,$6,$7,$8)`, id, org, in.Name, prefix, tokenHash(token), string(mustJSON(in.Scopes)), nullable(p.userID), nullableExpiry(in.ExpiresAt), in.Environment)
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "API key could not be created"})
 			return
 		}
-		writeJSON(w, 201, map[string]any{"id": id, "name": in.Name, "environment": "sandbox", "scopes": in.Scopes, "expires_at": in.ExpiresAt, "secret": token, "warning": "copy this secret now; it will not be shown again"})
+		writeJSON(w, 201, map[string]any{"id": id, "name": in.Name, "environment": in.Environment, "scopes": in.Scopes, "expires_at": in.ExpiresAt, "secret": token, "warning": "copy this secret now; it will not be shown again"})
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
@@ -539,6 +554,13 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request, parts []string) {
 	}
 	notFound(w, r)
 }
+func apiKeyPrefix(environment string) string {
+	if environment == "live" {
+		return "aegis_live_"
+	}
+	return "aegis_test_"
+}
+
 func validScope(s string) bool {
 	switch s {
 	case "organization.read", "members.read", "members.manage", "api_keys.read", "api_keys.create", "api_keys.revoke", "customers.read", "customers.create", "accounts.read", "accounts.create", "accounts.sandbox_credit", "collections.read", "collections.create", "collections.cancel", "collections.confirm", "collections.refund", "transfers.read", "transfers.create", "ledger.read", "fraud.read", "fraud.analyze", "fraud.investigate", "reconciliation.manage", "webhooks.read", "webhooks.manage", "reports.read", "audit.read", "transaction_policies.read", "transaction_policies.manage", "risk_rules.read", "risk_rules.manage", "*":

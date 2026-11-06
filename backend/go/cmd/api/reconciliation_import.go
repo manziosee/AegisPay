@@ -159,9 +159,16 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 
 	// References are unique per organization in each table, so each lookup
 	// yields at most one candidate per reference.
+	// In a live workspace the statement is what confirms money arrived, so
+	// pending collections are candidates too.
+	environment, err := organizationEnvironment(ctx, tx, org)
+	if err != nil {
+		writeJSON(w, 500, problem{Error: "workspace could not be loaded"})
+		return
+	}
 	collections, err := loadCandidates(tx, r, `SELECT c.reference,c.id,c.amount_minor,c.currency,c.status,
 		EXISTS(SELECT 1 FROM reconciliation_lines l WHERE l.organization_id=c.organization_id AND l.matched_collection_id=c.id AND l.match_status='matched')
-		FROM collections c WHERE c.organization_id=$1 AND c.reference=ANY($2) AND c.status='succeeded'`, org, references)
+		FROM collections c WHERE c.organization_id=$1 AND c.reference=ANY($2) AND (c.status='succeeded' OR (c.status='pending' AND (SELECT environment FROM organizations WHERE id=$1)='live'))`, org, references)
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "reconciliation match lookup failed"})
 		return
@@ -200,7 +207,7 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 
 	outcomes := make([]lineOutcome, len(in.Lines))
 	usedCollections, usedRequests, usedPayouts := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	var confirmedRequests, confirmedPayouts []string
+	var confirmedRequests, confirmedPayouts, confirmedCollections []string
 	var auditActions, auditTypes, auditResources []string
 	var auditLines []int64
 	matched, exceptions := 0, 0
@@ -221,6 +228,9 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 			case c.amount == gross && strings.EqualFold(c.currency, line.Currency):
 				out.status = "matched"
 				usedCollections[c.id] = true
+				if c.status == "pending" {
+					confirmedCollections = append(confirmedCollections, c.id)
+				}
 			default:
 				out.status = "exception"
 				out.reason = "Reference matches a succeeded collection, but amount or currency differs"
@@ -294,6 +304,16 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 			return
 		}
 	}
+	for _, collectionID := range confirmedCollections {
+		if err = ensurePeriodOpen(ctx, tx, org, time.Now()); err != nil {
+			periodGuardFailure(w, r, err)
+			return
+		}
+		if err = confirmCollectionFromStatement(ctx, tx, org, collectionID); err != nil {
+			writeJSON(w, 500, problem{Error: "collection could not be confirmed from the statement", RequestID: requestID(r)})
+			return
+		}
+	}
 	if len(confirmedRequests) > 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE bank_payment_requests SET status='statement_confirmed' WHERE organization_id=$1 AND id=ANY($2) AND status='open'`, org, confirmedRequests); err != nil {
 			writeJSON(w, 500, problem{Error: "payment request settlement status could not be updated"})
@@ -328,7 +348,7 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 		writeJSON(w, 500, problem{Error: "reconciliation event could not be stored"})
 		return
 	}
-	result := map[string]any{"id": id, "status": importStatus, "source_name": in.Source, "line_count": len(in.Lines), "matched_count": matched, "exception_count": exceptions, "mode": "sandbox"}
+	result := map[string]any{"id": id, "status": importStatus, "source_name": in.Source, "line_count": len(in.Lines), "matched_count": matched, "exception_count": exceptions, "mode": environment, "collections_confirmed": len(confirmedCollections)}
 	if err = storeIdempotency(ctx, tx, org, key, 201, result); err != nil {
 		idempotencyFailure(w, r, err)
 		return

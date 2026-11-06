@@ -13,7 +13,7 @@ func (a *App) userOrganizations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 403, problem{Error: "listing workspaces requires a user session", RequestID: requestID(r)})
 		return
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT o.id,o.name,o.workspace_type,o.country_code,m.role,m.joined_at
+	rows, err := a.db.QueryContext(r.Context(), `SELECT o.id,o.name,o.workspace_type,o.environment,o.country_code,m.role,m.joined_at
 		FROM memberships m JOIN organizations o ON o.id=m.organization_id
 		WHERE m.user_id=$1 AND m.status='active' AND o.status='active'
 		ORDER BY m.joined_at`, p.userID)
@@ -26,6 +26,7 @@ func (a *App) userOrganizations(w http.ResponseWriter, r *http.Request) {
 		ID            string    `json:"id"`
 		Name          string    `json:"name"`
 		WorkspaceType string    `json:"workspace_type"`
+		Environment   string    `json:"environment"`
 		CountryCode   string    `json:"country_code"`
 		Role          string    `json:"role"`
 		JoinedAt      time.Time `json:"joined_at"`
@@ -34,7 +35,7 @@ func (a *App) userOrganizations(w http.ResponseWriter, r *http.Request) {
 	data := []organization{}
 	for rows.Next() {
 		var item organization
-		if err = rows.Scan(&item.ID, &item.Name, &item.WorkspaceType, &item.CountryCode, &item.Role, &item.JoinedAt); err != nil {
+		if err = rows.Scan(&item.ID, &item.Name, &item.WorkspaceType, &item.Environment, &item.CountryCode, &item.Role, &item.JoinedAt); err != nil {
 			writeJSON(w, 500, problem{Error: "workspaces could not be read", RequestID: requestID(r)})
 			return
 		}

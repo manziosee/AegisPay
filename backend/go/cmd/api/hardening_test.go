@@ -228,3 +228,34 @@ func TestDocsEndpointsServeSpecAndSwaggerUI(t *testing.T) {
 		t.Fatalf("docs page: %d", rec.Code)
 	}
 }
+
+func TestUndeliverableAddressSkipsReservedDomains(t *testing.T) {
+	for address, want := range map[string]bool{
+		"a@example.com":     true,
+		"a@EXAMPLE.org":     true,
+		"a@shop.test":       true,
+		"a@host.invalid":    true,
+		"not-an-address":    true,
+		"a@gmail.com":       false,
+		"a@myexample.com":   false,
+		"a@company.testing": false,
+	} {
+		if got := undeliverableAddress(address); got != want {
+			t.Errorf("undeliverableAddress(%q) = %v, want %v", address, got, want)
+		}
+	}
+}
+
+func TestSampleAmountUsesTheCurrencysMinorUnits(t *testing.T) {
+	if got := sampleAmount(100, "USD"); got != 10000 {
+		t.Errorf("USD: got %d, want 10000", got)
+	}
+	// No scale entry, three minor digits.
+	if got := sampleAmount(100, "BHD"); got != 100000 {
+		t.Errorf("BHD: got %d, want 100000", got)
+	}
+	// Scaled to look sensible, no minor digits.
+	if got := sampleAmount(100, "RWF"); got != 140000 {
+		t.Errorf("RWF: got %d, want 140000", got)
+	}
+}

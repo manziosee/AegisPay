@@ -42,6 +42,7 @@ type RegisterInput = {
   workspace_type: "personal" | "business";
   organization_name: string;
   country_code?: string;
+  accepted_terms?: boolean;
 };
 
 type SessionContextValue = {
@@ -184,7 +185,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           workspace_type: input.workspace_type,
           organization_name:
             input.workspace_type === "business" ? input.organization_name.trim() : "",
-          country_code: input.country_code
+          country_code: input.country_code,
+          accepted_terms: input.accepted_terms
         })
       });
       persist(result, input.full_name);

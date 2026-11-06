@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/components/providers/session-provider";
+import { useWorkspaceData } from "@/components/providers/workspace-data-provider";
 import { api, apiIdempotent, errorMessage } from "@/lib/api";
 import { Field, FormDialog } from "@/components/ui-blocks/form-dialog";
 import { isAdmin } from "@/lib/roles";
@@ -39,7 +40,9 @@ async function withConcurrency<T, R>(
 
 export default function AccountsPage() {
   const { session, role } = useSession();
-  const canCredit = isAdmin(role ?? undefined);
+  const { data: workspace } = useWorkspaceData();
+  // Simulated credits exist only in practice workspaces.
+  const canCredit = isAdmin(role ?? undefined) && workspace.organization?.environment !== "live";
   const [crediting, setCrediting] = useState<Account | null>(null);
   const [creditAmount, setCreditAmount] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -139,7 +142,7 @@ export default function AccountsPage() {
     <div>
       <PageHeader
         title="Accounts"
-        description="Currency-specific ledger accounts and their postings. Balances are sums of journal lines, not bank-held funds."
+        description="Currency-specific ledger accounts and their postings. Balances are records built from journal lines, not funds held by AegisPay."
         actions={
           <Button
             className="h-9 bg-primary text-[12.5px] font-semibold text-primary-foreground"

@@ -8,6 +8,9 @@ export type Role =
 
 export type WorkspaceType = "personal" | "business";
 
+/** sandbox: practice with simulated money. live: confirmed by bank statements. */
+export type WorkspaceEnvironment = "sandbox" | "live";
+
 /** Signed-in user profile. The bearer token stays in an httpOnly cookie. */
 export type Session = {
   user_id: string;
@@ -24,6 +27,7 @@ export type Principal = {
   credential_type: string;
   full_name?: string;
   email?: string;
+  email_verified?: boolean;
   expires_at?: string;
 };
 
@@ -31,6 +35,7 @@ export type Organization = {
   id: string;
   name: string;
   workspace_type: WorkspaceType;
+  environment?: WorkspaceEnvironment;
   slug: string;
   country_code: string;
   status: string;
@@ -100,7 +105,7 @@ export type FraudAssessment = {
   risk_level: string;
   decision: RiskDecision;
   model_version: string;
-  mode: string;
+  matched_rules?: { id: string; name: string; action: string; reason: string }[];
   case_id: string | null;
 };
 
@@ -319,6 +324,7 @@ export type WorkspaceMembership = {
   id: string;
   name: string;
   workspace_type: WorkspaceType;
+  environment?: WorkspaceEnvironment;
   country_code: string;
   role: Role;
   joined_at: string;

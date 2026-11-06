@@ -200,9 +200,21 @@ func (a *App) resolveReconciliationLine(w http.ResponseWriter, r *http.Request, 
 			writeJSON(w, 500, problem{Error: "collection lookup failed"})
 			return
 		}
-		if collectionStatus != "succeeded" || strings.TrimSpace(collectionCurrency) != strings.TrimSpace(currency) || collectionAmount != amount+fee {
+		environment, envErr := organizationEnvironment(r.Context(), tx, org)
+		if envErr != nil {
+			writeJSON(w, 500, problem{Error: "workspace could not be loaded"})
+			return
+		}
+		confirmable := collectionStatus == "pending" && environment == "live"
+		if (collectionStatus != "succeeded" && !confirmable) || strings.TrimSpace(collectionCurrency) != strings.TrimSpace(currency) || collectionAmount != amount+fee {
 			writeJSON(w, 409, problem{Error: "collection must be succeeded and match the statement gross amount and currency"})
 			return
+		}
+		if confirmable {
+			if err = confirmCollectionFromStatement(r.Context(), tx, org, in.CollectionID); err != nil {
+				writeJSON(w, 500, problem{Error: "collection could not be confirmed from the statement"})
+				return
+			}
 		}
 		var reconciled bool
 		if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM reconciliation_lines WHERE organization_id=$1 AND matched_collection_id=$2 AND match_status='matched')`, org, in.CollectionID).Scan(&reconciled); err != nil {

@@ -36,6 +36,7 @@ func (a *App) maintenancePass(ctx context.Context) {
 		{"idempotency_records", `DELETE FROM idempotency_records WHERE ctid IN (SELECT ctid FROM idempotency_records WHERE created_at < now() - make_interval(hours => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, idempotencyHours},
 		{"mfa_login_challenges", `DELETE FROM mfa_login_challenges WHERE ctid IN (SELECT ctid FROM mfa_login_challenges WHERE expires_at < now() - make_interval(hours => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, 0},
 		{"password_reset_tokens", `DELETE FROM password_reset_tokens WHERE ctid IN (SELECT ctid FROM password_reset_tokens WHERE created_at < now() - make_interval(days => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, 7},
+		{"email_verification_tokens", `DELETE FROM email_verification_tokens WHERE ctid IN (SELECT ctid FROM email_verification_tokens WHERE created_at < now() - make_interval(days => $1) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, 30},
 		{"user_sessions", `DELETE FROM user_sessions WHERE ctid IN (SELECT ctid FROM user_sessions WHERE (expires_at < now() - make_interval(days => $1)) OR (revoked_at < now() - make_interval(days => $1)) LIMIT ` + strconv.Itoa(maintenanceBatch) + `)`, sessionDays},
 	}
 	for _, sweep := range sweeps {

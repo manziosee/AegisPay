@@ -235,11 +235,11 @@ export function CommandPalette() {
                 Sign in
               </CommandItem>
               <CommandItem
-                value="create sandbox account register"
+                value="create free account register"
                 onSelect={() => go("/register")}
               >
                 <UserPlus className="text-ink-400" />
-                Create sandbox account
+                Create free account
               </CommandItem>
             </>
           )}

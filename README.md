@@ -18,9 +18,9 @@
 ![YAML](https://img.shields.io/badge/YAML-configuration-CB171E?logo=yaml&logoColor=white)
 ![Shell](https://img.shields.io/badge/Shell-POSIX-4EAA25?logo=gnubash&logoColor=white)
 
-AegisPay is a sandbox-first, multi-tenant payment operations platform for businesses anywhere in the world. It gives finance teams one place for a double-entry ledger, collections and refunds, maker-checker approvals, bank-statement reconciliation, period close, fraud review, signed webhooks, and an audit trail. It works with any ISO 4217 currency, and with any bank or payment provider through bank files and statements.
+AegisPay is a multi-tenant payment operations platform for businesses anywhere in the world. It gives finance teams one place for a double-entry ledger, collections and refunds, maker-checker approvals, bank-statement reconciliation, period close, fraud review, signed webhooks, and an audit trail. It works with any ISO 4217 currency, and with any bank or payment provider through bank files and statements.
 
-## Live sandbox
+## Hosted version
 
 | What | URL |
 | --- | --- |
@@ -30,9 +30,14 @@ AegisPay is a sandbox-first, multi-tenant payment operations platform for busine
 | OpenAPI document | <https://aegispay.fly.dev/openapi.yaml> |
 | Health checks | <https://aegispay.fly.dev/health/live>, <https://aegispay.fly.dev/health/ready> |
 
-Create a sandbox workspace from the dashboard's **Create sandbox account** button, or call `POST /v1/auth/register` directly.
+Create a workspace from the dashboard's **Create free account** button, or call `POST /v1/auth/register` directly.
 
-> **Sandbox only.** The ledger records internal platform activity; it does not represent bank-held funds or move money over a real payment network. This repository has no live payment connectors and must not be used to process real funds or cardholder data.
+> **AegisPay never moves money.** It keeps the records around payments your bank or provider actually makes. There are two kinds of workspace, and a workspace can't change kind later:
+>
+> - **Practice** (`environment: sandbox`): simulated money, sandbox credits and optional sample data. This is the default.
+> - **Live** (`environment: live`): your real records. Sandbox credits and simulated confirmations are refused, and a collection is only confirmed by matching a line on an imported bank statement. Creating one needs a confirmed email address.
+>
+> Do not store raw card data.
 
 ## Contents
 
@@ -67,7 +72,7 @@ flowchart LR
     Prom[Prometheus] -->|scrape /metrics| API
 ```
 
-Docker Compose is the recommended local setup. PostgreSQL, Redis, and Fraud stay on the internal Compose network. The business dashboard includes a public product landing page and a role-aware operations workspace; it proxies authenticated API requests through the same origin. Workflows are sandbox-only and do not connect to live payment providers or move real funds. The Go API applies versioned database migrations at startup in this development setup.
+Docker Compose is the recommended local setup. PostgreSQL, Redis, and Fraud stay on the internal Compose network. The business dashboard includes a public product landing page and a role-aware operations workspace; it proxies authenticated API requests through the same origin. Workflows do not connect to live payment providers or move real funds. The Go API applies versioned database migrations at startup in this development setup.
 
 The Kubernetes Kustomize base deploys the same services with single replicas and in-cluster PostgreSQL/Redis. It is a development starting point, not a production cluster design.
 
@@ -266,6 +271,7 @@ These deploy the whole stack on your own infrastructure; see [Run locally](#run-
 | [`ci.yml`](.github/workflows/ci.yml) | Pushes to `main` and pull requests | Go formatting, `go vet`, unit tests and `govulncheck`; the API built and run against real PostgreSQL and Redis with [`scripts/api_integration_test.py`](scripts/api_integration_test.py) (every migration on an empty database, then risk rules, events, sessions and the audit chain); OpenAPI lint; dashboard typecheck, production build and Playwright tests |
 | [`deploy-backend.yml`](.github/workflows/deploy-backend.yml) | Pushes to `main` that change `backend/go/**`, or a manual run | Runs the Go tests, deploys to Fly.io with `flyctl deploy --remote-only`, then waits until `/health/ready` and `/openapi.yaml` respond |
 | [`live-smoke.yml`](.github/workflows/live-smoke.yml) | Weekly and on demand | Runs `npm run test:live` against the deployed dashboard and API |
+| [`backup-database.yml`](.github/workflows/backup-database.yml) | Nightly and on demand | Dumps the production database, restores it into a throwaway PostgreSQL to prove it works, encrypts it and stores it as a 14-day workflow artifact |
 | [`container-security.yml`](.github/workflows/container-security.yml) | Pull requests, weekly, and on demand | Builds the API and fraud images and scans them with Trivy for high and critical issues |
 | Netlify (Git integration) | Pushes to `main` | Builds and publishes the dashboard |
 | [Dependabot](.github/dependabot.yml) | Weekly | Update pull requests for Go modules, npm, pip, GitHub Actions and the API base image |
@@ -296,12 +302,13 @@ Settings read by the Go API. Secrets go in `.env` locally, `fly secrets` on Fly.
 | `HTTP_ADDR` | Optional | Listen address (default `:8080`). |
 | `RATE_LIMIT_PER_MINUTE` | Optional | Requests per minute for each authenticated credential (default 600). |
 | `REGISTER_LIMIT_PER_HOUR` | Optional | Sign-ups per hour from one client address (default 20). Shared mobile and home networks put many people behind one address. |
-| `FRAUD_SERVICE_URL` | Optional | Fraud scorer URL (default `http://fraud:8090`). Without it, risk analysis returns 503. |
+| `FRAUD_SERVICE_URL` | Optional | External fraud scorer URL. Risk analysis always runs the workspace's rules; the scorer can only make an outcome stricter, and if it is down the rules result stands. |
 | `TRANSFER_APPROVAL_THRESHOLD_MINOR` | Optional | Fallback approval threshold when an organization has no policy. |
 | `WEBHOOK_WORKER_CONCURRENCY` / `OUTBOX_BATCH_SIZE` | Optional | Webhook worker pool size (16) and outbox batch size (200). |
 | `IDEMPOTENCY_RETENTION_HOURS` / `SESSION_RETENTION_DAYS` / `MAINTENANCE_INTERVAL_MINUTES` | Optional | Retention and cleanup cadence (24 h, 30 days, 60 min). |
 | `SWAGGER_ORIGIN` | Optional | Origin allowed by CORS for a separately hosted Swagger UI. |
 | `DASHBOARD_URL` | For email | Public dashboard address used in email links (for example `https://aegispays.netlify.app`). |
+| `SUPPORT_EMAIL` | Optional | Where feedback from the dashboard is sent (default `EMAIL_FROM`). |
 | `BREVO_API_KEY` | For email | Brevo API key with transactional email permission (free plan: 300 emails a day). |
 | `EMAIL_FROM` / `EMAIL_FROM_NAME` | For email | Verified Brevo sender address and display name. |
 
@@ -310,7 +317,7 @@ The dashboard reads `API_PROXY_TARGET`, `TRUSTED_PROXY_SECRET`, `CLIENT_IP_HEADE
 ## API quick start
 
 For the hosted sandbox, use `https://aegispay.fly.dev` and try requests from <https://aegispay.fly.dev/docs>. The default local API base URL is `http://localhost:18080`. Set `API_PORT=8080` when launching Compose to use port 8080 instead. Interactive API documentation is at `http://localhost:8081`.
-The AegisPay landing page and business dashboard are at `http://localhost:3000`. From the landing page, select **Log in** or **Create sandbox account** to open the workspace authentication flow.
+The AegisPay landing page and business dashboard are at `http://localhost:3000`. From the landing page, select **Log in** or **Create free account** to open the workspace authentication flow.
 
 Check readiness and list the bootstrap sandbox organization:
 
@@ -388,6 +395,15 @@ Kubernetes Secret values are base64 encoded, not encrypted by default. Enable cl
 
 ## Operations
 
+- **Production backups.** Fly takes daily snapshots of the database volume (`fly volumes snapshots list`). In addition, [`backup-database.yml`](.github/workflows/backup-database.yml) keeps an encrypted copy off Fly for 14 days. It needs three repository secrets: `FLY_BACKUP_TOKEN`, `BACKUP_DATABASE_URL` (the API's `DATABASE_URL` with the host changed to `127.0.0.1:15432`) and `BACKUP_PASSPHRASE`. Keep the passphrase somewhere safe as well; without it the backups can't be read.
+- **Restoring one.** Download the artifact from the workflow run, then decrypt it and restore into an empty database. Check the result before pointing the API at it:
+
+  ```sh
+  gpg --decrypt --output backup.dump aegispay-backup.dump.gpg
+  pg_restore --no-owner --exit-on-error --dbname="$NEW_DATABASE_URL" backup.dump
+  ```
+
+- **Sample data.** `aegispay-api seed-sample-data EMAIL...` adds labelled sample records to each named user's practice workspace. Users can do the same from the getting-started checklist.
 - Back up the local database with [`scripts/backup-postgres.sh`](scripts/backup-postgres.sh).
 - Restore an archive into a separate database with [`scripts/restore-postgres-to-new-db.sh`](scripts/restore-postgres-to-new-db.sh); the script leaves the active database unchanged.
 - Local backups are compressed but not encrypted. Configure production encryption, retention, access controls, and recurring restore drills in the hosting environment.
@@ -395,9 +411,9 @@ Kubernetes Secret values are base64 encoded, not encrypted by default. Enable cl
 
 ## Security boundary and production work
 
-The bootstrap key in `.env` is a privileged local sandbox operator credential. Normal user roles and API-key scopes restrict access. Webhooks require HTTPS and reject DNS resolutions to private, local, link-local, or other non-public addresses. These controls are useful for local development; they do not by themselves constitute a production security program.
+The bootstrap key in `.env` is a privileged operator credential. Normal user roles and API-key scopes restrict access. Webhooks require HTTPS and reject DNS resolutions to private, local, link-local, or other non-public addresses. These controls are useful for local development; they do not by themselves constitute a production security program.
 
-A production payment platform still needs authorized bank/mobile-money partners, provider callbacks and settlement/reversal handling, and jurisdiction-specific approvals. The repository does not have live collection or payout integrations. Production deployment also needs a managed identity provider with MFA and recovery, invitation flows, tenant row-level security, access reviews, a separate migration job and database role, TLS and private managed data services, managed secrets, encrypted backups and restore drills, monitoring and alerts, incident response, and environment-isolated CI/CD. Do not store raw card data.
+A production payment platform still needs authorized bank/mobile-money partners, provider callbacks and settlement/reversal handling, and jurisdiction-specific approvals. The repository does not have live collection or payout integrations. The Terms, Privacy Policy and cookie notice in the dashboard are drafts that need your legal entity, jurisdiction and a lawyer's review. Production deployment also needs tenant row-level security, access reviews, a separate migration job and database role, TLS and private managed data services, managed secrets, monitoring and alerts, incident response, and environment-isolated CI/CD. Do not store raw card data.
 
 ## Repository layout
 

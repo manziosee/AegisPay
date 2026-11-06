@@ -1,5 +1,6 @@
 "use client";
 
+import { GettingStarted } from "@/components/onboarding/getting-started";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -270,6 +271,7 @@ export default function OverviewPage() {
     return (
       <div>
         {header}
+        <GettingStarted />
         <OnboardingPanel />
       </div>
     );
@@ -279,6 +281,7 @@ export default function OverviewPage() {
     <div>
       {header}
       {rejectDialog}
+      <GettingStarted />
 
       <MetaStrip counts={counts} />
 
@@ -561,7 +564,7 @@ export default function OverviewPage() {
             <EmptyState
               icon={ArrowLeftRight}
               title="No transactions yet"
-              text="When your team records sandbox activity, it will appear here."
+              text="When your team records activity, it will appear here."
             />
           ) : (
             <div className="overflow-x-auto">

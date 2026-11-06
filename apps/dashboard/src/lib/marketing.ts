@@ -134,7 +134,7 @@ export const megaMenus: MegaMenu[] = [
             description: "Open an existing workspace."
           },
           {
-            label: "Create sandbox account",
+            label: "Create free account",
             href: "/register",
             description: "Register a business or personal sandbox."
           }

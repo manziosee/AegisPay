@@ -34,6 +34,7 @@ func (m *mailer) configured() bool { return m != nil && m.apiKey != "" && m.from
 
 type email struct {
 	To, ToName, Subject string
+	ReplyTo             string
 	Heading             string
 	Paragraphs          []string
 	ActionLabel         string
@@ -80,17 +81,25 @@ func (m *mailer) send(ctx context.Context, e email) error {
 		slog.Info("email not sent: BREVO_API_KEY or EMAIL_FROM is not configured", "subject", e.Subject)
 		return nil
 	}
+	if undeliverableAddress(e.To) {
+		slog.Info("email not sent: reserved test domain", "subject", e.Subject)
+		return nil
+	}
 	to := map[string]string{"email": e.To}
 	if e.ToName != "" {
 		to["name"] = e.ToName
 	}
-	body, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"sender":      map[string]string{"email": m.from, "name": m.fromName},
 		"to":          []map[string]string{to},
 		"subject":     e.Subject,
 		"textContent": e.text(),
 		"htmlContent": e.html(),
-	})
+	}
+	if e.ReplyTo != "" {
+		payload["replyTo"] = map[string]string{"email": e.ReplyTo}
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.brevo.com/v3/smtp/email", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -108,6 +117,23 @@ func (m *mailer) send(ctx context.Context, e email) error {
 		return fmt.Errorf("email provider returned %d: %s", resp.StatusCode, strings.TrimSpace(string(detail)))
 	}
 	return nil
+}
+
+// undeliverableAddress skips reserved domains (RFC 2606 and 6761). Sending to
+// them, as automated tests do, would only bounce and harm the sender's
+// reputation.
+func undeliverableAddress(address string) bool {
+	at := strings.LastIndex(address, "@")
+	if at < 0 {
+		return true
+	}
+	domain := strings.ToLower(address[at+1:])
+	for _, reserved := range []string{"example.com", "example.org", "example.net"} {
+		if domain == reserved {
+			return true
+		}
+	}
+	return strings.HasSuffix(domain, ".test") || strings.HasSuffix(domain, ".invalid") || strings.HasSuffix(domain, ".example") || strings.HasSuffix(domain, ".localhost")
 }
 
 // sendEmailAsync sends without delaying the API response. Failures are

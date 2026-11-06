@@ -38,7 +38,7 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
   const [loadError, setLoadError] = useState("");
   const [switching, setSwitching] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", country: "", type: "business" as "business" | "personal" });
+  const [form, setForm] = useState({ name: "", country: "", type: "business" as "business" | "personal", environment: "sandbox" as "sandbox" | "live" });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -69,7 +69,7 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
   };
 
   const openCreate = () => {
-    setForm({ name: "", country: browserCountry(), type: "business" });
+    setForm({ name: "", country: browserCountry(), type: "business", environment: "sandbox" });
     setCreateError("");
     setCreateOpen(true);
   };
@@ -86,7 +86,7 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
     try {
       const created = await api<{ id: string; name: string }>("/organizations", {
         method: "POST",
-        body: JSON.stringify({ name: form.name.trim(), country_code: country, workspace_type: form.type })
+        body: JSON.stringify({ name: form.name.trim(), country_code: country, workspace_type: form.type, environment: form.environment })
       });
       setCreateOpen(false);
       setWorkspaces(null);
@@ -115,7 +115,7 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12.5px] font-medium text-on-night">{name}</span>
               <span className="block truncate text-[10.5px] capitalize text-on-night-muted">
-                {organization?.workspace_type === "personal" ? "Personal sandbox" : "Business sandbox"}
+                {organization?.workspace_type === "personal" ? "Personal" : "Business"} · {organization?.environment === "live" ? "live" : "practice"}
               </span>
             </span>
             <ChevronRight className="size-3.5 rotate-90 text-on-night-muted" />
@@ -143,7 +143,7 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12.5px]">{item.name}</span>
                 <span className="block text-[10.5px] text-muted-foreground">
-                  {roleLabel(item.role)} · {item.workspace_type} · {item.country_code}
+                  {roleLabel(item.role)} · {item.environment === "live" ? "live" : "practice"} · {item.country_code}
                   {switching === item.id ? " · switching…" : ""}
                 </span>
               </span>
@@ -208,6 +208,19 @@ export function WorkspaceSwitcher({ organization }: { organization: Organization
                   <option value="personal">Personal</option>
                 </select>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="workspace-environment">Kind of workspace</Label>
+              <select
+                id="workspace-environment"
+                value={form.environment}
+                onChange={(event) => setForm({ ...form, environment: event.target.value as "sandbox" | "live" })}
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-[12px]"
+              >
+                <option value="sandbox">Practice: simulated money, safe to explore</option>
+                <option value="live">Live: your real records, confirmed by bank statements</option>
+              </select>
+              <p className="text-[10.5px] text-ink-400">AegisPay never moves money. A workspace can't change kind later; create another if you need to.</p>
             </div>
             {createError && (
               <p role="alert" className="text-[11.5px] text-destructive">

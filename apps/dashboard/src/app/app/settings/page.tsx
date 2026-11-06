@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
 import { SessionsPanel } from "@/components/settings/sessions-panel";
+import { DataPanel } from "@/components/settings/data-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -214,7 +215,7 @@ export default function SettingsPage() {
         <Panel>
           <PanelHeader
             title="Transaction policies"
-            description="Currency-specific controls for sandbox collections and internal transfers."
+            description="Currency-specific controls for collections and internal transfers."
             action={
               <span className="inline-flex items-center gap-1 text-[10.5px] text-ink-400">
                 <LockKeyhole className="size-3.5" />
@@ -304,12 +305,13 @@ export default function SettingsPage() {
 
       <p className="mt-3 flex items-start gap-2 text-[10.5px] leading-relaxed text-ink-400">
         <LockKeyhole className="mt-0.5 size-3.5 shrink-0" />
-        This workspace is sandbox-only. Limits govern simulated ledger operations and do not
-        authorize or execute external payments.
+        Limits govern operations recorded in AegisPay. They do not authorize or execute payments
+        at your bank.
       </p>
 
       <SecurityPanel />
       <SessionsPanel />
+      <DataPanel />
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="sm:max-w-[520px]">

@@ -143,7 +143,7 @@ export function SiteHeader() {
                 className="h-9 rounded-full bg-primary px-3 text-[12px] font-semibold text-primary-foreground hover:bg-primary/90 sm:px-4 sm:text-[13px]"
               >
                 <Link href="/register">
-                  <span className="hidden sm:inline">Create sandbox account</span>
+                  <span className="hidden sm:inline">Create free account</span>
                   <span className="sm:hidden">Create account</span>
                 </Link>
               </Button>
@@ -200,7 +200,7 @@ export function SiteHeader() {
                   </Button>
                   <Button asChild className="h-10 bg-primary text-primary-foreground">
                     <Link href="/register" onClick={() => setMobileOpen(false)}>
-                      Create sandbox account
+                      Create free account
                     </Link>
                   </Button>
                 </div>

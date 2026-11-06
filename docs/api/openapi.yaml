@@ -3,9 +3,11 @@ info:
   title: AegisPay API
   version: 0.1.0
   description: |-
-    Sandbox-first multi-tenant payment infrastructure API. Monetary amounts use
-    the smallest currency unit. Internal balances are ledger records and are not
-    deposits or a claim on funds held in a bank. External payment execution is disabled.
+    Multi-tenant payment operations API. Monetary amounts use the smallest currency
+    unit. Balances are ledger records, not deposits or a claim on funds held in a bank.
+    AegisPay never moves money. Practice workspaces use simulated money. Live workspaces
+    hold real records: sandbox credits and simulated confirmations are refused, and a
+    collection is confirmed by matching a bank statement line.
 servers:
   - url: https://aegispay.fly.dev
     description: Hosted sandbox
@@ -62,6 +64,7 @@ paths:
                 email: {type: string, format: email}
                 password: {type: string, minLength: 12, maxLength: 72}
                 country_code: {type: string, minLength: 2, maxLength: 2, description: 'ISO 3166 alpha-2 country of the workspace, for example US, GB, DE, KE or IN'}
+                accepted_terms: {type: boolean, description: Records that the person accepted the Terms and Privacy Policy}
       responses: {'201': {description: Created owner and bearer session}, '409': {description: Email already exists}}
   /v1/auth/login:
     post:
@@ -95,6 +98,30 @@ paths:
         required: true
         content: {application/json: {schema: {type: object, required: [token, password], properties: {token: {type: string}, password: {type: string, minLength: 12, maxLength: 72}}}}}
       responses: {'200': {description: Password changed}, '400': {description: 'Invalid, expired or used token, or invalid password'}}
+  /v1/auth/email/verify:
+    post:
+      security: []
+      summary: Confirm an email address with the token from the confirmation email
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [token], properties: {token: {type: string}}}}}
+      responses: {'200': {description: Email confirmed}, '400': {description: Link invalid or expired or already used}, '429': {description: Too many attempts}}
+  /v1/auth/email/resend:
+    post:
+      summary: Send another confirmation email to the signed-in user
+      responses: {'200': {description: Already confirmed}, '202': {description: Email sent}, '403': {description: User session required}, '429': {description: Too many attempts}}
+  /v1/auth/account/export:
+    get:
+      summary: Download everything stored about the signed-in user as JSON
+      responses: {'200': {description: Account data export}, '403': {description: User session required}}
+  /v1/auth/account/delete:
+    post:
+      summary: Delete the signed-in user's account
+      description: Anonymizes the user, ends their sessions and closes workspaces they alone belong to. Ledger and audit records are kept because they must stay intact.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [password], properties: {password: {type: string}, code: {type: string, description: Authenticator code; required when MFA is on}}}}}
+      responses: {'200': {description: Account deleted}, '401': {description: Wrong password or code}, '403': {description: User session required}, '409': {description: Sole owner of a workspace with other active members}}
   /v1/auth/organizations:
     get:
       summary: List the workspaces the signed-in user can switch to
@@ -235,10 +262,31 @@ paths:
       description: Any signed-in user session can create a workspace and becomes its owner. Select it afterwards with X-Organization-ID.
       requestBody:
         required: true
-        content: {application/json: {schema: {type: object, required: [name, country_code], properties: {name: {type: string}, slug: {type: string}, country_code: {type: string, minLength: 2, maxLength: 2}, workspace_type: {type: string, enum: [business, personal], default: business}}}}}
+        content: {application/json: {schema: {type: object, required: [name, country_code], properties: {name: {type: string}, slug: {type: string}, country_code: {type: string, minLength: 2, maxLength: 2}, workspace_type: {type: string, enum: [business, personal], default: business}, environment: {type: string, enum: [sandbox, live], default: sandbox, description: Practice (sandbox) or live. Live needs a confirmed email and cannot be changed later.}}}}}
       responses:
         '201': {description: Organization created}
-        '403': {description: Owner or admin session required}
+        '403': {description: 'Owner or admin session required, or email not confirmed for a live workspace'}
+  /v1/organizations/export:
+    get:
+      summary: Download the current workspace's records as JSON
+      description: Owner or admin only. Secrets such as API key hashes and webhook secrets are left out.
+      responses: {'200': {description: Workspace export}, '403': {description: Owner or admin required}}
+  /v1/onboarding/status:
+    get:
+      summary: Progress for the getting-started checklist
+      responses: {'200': {description: Environment and sample-data state and checklist counts}}
+  /v1/onboarding/sample-data:
+    post:
+      summary: Fill a practice workspace with clearly labelled sample records
+      description: Practice workspaces only, once per workspace. Every reference starts with SAMPLE-.
+      responses: {'201': {description: Sample data added}, '403': {description: Owner or admin required}, '409': {description: Live workspace or sample data already added}}
+  /v1/feedback:
+    post:
+      summary: Send a message to the support team
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [message], properties: {message: {type: string, maxLength: 4000}, page: {type: string, maxLength: 200}}}}}
+      responses: {'202': {description: Message sent}, '403': {description: User session required}, '429': {description: Too many messages}, '503': {description: Support email not configured}}
   /v1/customers:
     get:
       summary: List organization customers
@@ -380,11 +428,12 @@ paths:
       responses: {'200': {description: Ledger entries}}
   /v1/fraud/analyze:
     post:
-      summary: Assess sandbox transaction risk
+      summary: Evaluate a transaction against the workspace's risk rules
+      description: Records a risk assessment and returns its outcome with matched_rules. If FRAUD_SERVICE_URL is set, that scorer can only make the outcome stricter; when it is down the rules result stands.
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/RiskAnalyze'}}}
-      responses: {'200': {description: Baseline rule result}}
+      responses: {'200': {description: Assessment with score and outcome and matched_rules}}
   /v1/fraud/cases:
     get:
       summary: List fraud cases for the organization
@@ -787,6 +836,7 @@ components:
         transaction_reference: {type: string}
         amount: {type: integer, minimum: 1}
         currency: {type: string}
+        kind: {type: string, description: Optional transaction kind that risk rules can match}
     Error:
       type: object
       properties:

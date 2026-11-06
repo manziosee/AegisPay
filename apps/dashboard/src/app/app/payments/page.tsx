@@ -36,7 +36,8 @@ function minorOrThrow(value: string, currency: string) {
 
 export default function PaymentsPage() {
   const { session, role } = useSession();
-  const { refresh } = useWorkspaceData();
+  const { refresh, data: workspace } = useWorkspaceData();
+  const isLive = workspace.organization?.environment === "live";
   const [collections, setCollections] = useState<Collection[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -159,7 +160,11 @@ export default function PaymentsPage() {
     <div>
       <PageHeader
         title="Collections and transfers"
-        description="Record money you expect to receive, confirm it into an account, refund it, or move funds between your own accounts. Sandbox postings do not move real money."
+        description={
+          isLive
+            ? "Record money you expect to receive and move funds between your accounts. A collection is confirmed when a line in your imported bank statement matches its reference and amount."
+            : "Practice workspace: record money you expect, confirm it with simulated money, refund it, or move funds between accounts."
+        }
         actions={
           <div className="flex gap-2">
             <Button
@@ -223,10 +228,14 @@ export default function PaymentsPage() {
                         <td className="px-4 py-3 text-[11px] text-ink-400">{formatDateTime(item.created_at)}</td>
                         <td className="px-5 py-3 text-right">
                           {item.status === "pending" && (
-                            <span className="inline-flex gap-1.5">
-                              <Button size="sm" className="h-7 text-[11px]" onClick={() => open({ kind: "confirm", collection: item }, { account: accountOptions(item.currency)[0]?.value ?? "" })}>
-                                Confirm
-                              </Button>
+                            <span className="inline-flex items-center gap-1.5">
+                              {isLive ? (
+                                <span className="text-[10.5px] text-ink-400">Awaiting bank statement</span>
+                              ) : (
+                                <Button size="sm" className="h-7 text-[11px]" onClick={() => open({ kind: "confirm", collection: item }, { account: accountOptions(item.currency)[0]?.value ?? "" })}>
+                                  Confirm
+                                </Button>
+                              )}
                               <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => open({ kind: "cancel", collection: item })}>
                                 Cancel
                               </Button>
@@ -296,16 +305,16 @@ export default function PaymentsPage() {
             : dialog?.kind === "cancel"
               ? "Cancel collection"
               : dialog?.kind === "refund"
-                ? "Post refund"
+                ? isLive ? "Record refund" : "Post refund"
                 : dialog?.kind === "transfer"
                   ? "Transfer"
                   : "Create collection"
         }
         description={
           dialog?.kind === "confirm"
-            ? `${formatMinor(dialog.collection.amount, dialog.collection.currency)} · ${dialog.collection.reference}. Sandbox only: confirms the collection without an external payment.`
+            ? `${formatMinor(dialog.collection.amount, dialog.collection.currency)} · ${dialog.collection.reference}. Practice only: confirms the collection with simulated money.`
             : dialog?.kind === "refund"
-              ? `Up to ${formatMinor(dialog.collection.amount, dialog.collection.currency)} less earlier refunds.`
+              ? `Up to ${formatMinor(dialog.collection.amount, dialog.collection.currency)} less earlier refunds.${isLive ? " This records the refund in your ledger; make the payment itself at your bank or provider." : ""}`
               : dialog?.kind === "cancel"
                 ? `${dialog.collection.reference} will no longer be matched or confirmed.`
                 : dialog?.kind === "transfer"

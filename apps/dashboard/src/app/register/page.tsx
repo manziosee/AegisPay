@@ -3,7 +3,7 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { RegisterForm } from "@/components/auth/register-form";
 
 export const metadata: Metadata = {
-  title: "Create a sandbox workspace"
+  title: "Create your workspace"
 };
 
 export default async function RegisterPage({
@@ -16,7 +16,7 @@ export default async function RegisterPage({
   return (
     <AuthShell
       title="Create your workspace"
-      description="Set up a sandbox organization for ledger, approval and reconciliation workflows."
+      description="Start in a free practice workspace with simulated money. Create a live workspace whenever you're ready."
     >
       <RegisterForm next={next} />
     </AuthShell>

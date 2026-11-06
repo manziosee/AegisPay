@@ -62,6 +62,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	if len(os.Args) > 2 && os.Args[1] == "seed-sample-data" {
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer seedCancel()
+		runSeedCommand(seedCtx, db, os.Args[2:])
+		return
+	}
 	db.SetMaxOpenConns(20)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -117,6 +123,7 @@ func main() {
 	mux.HandleFunc("POST /v1/auth/mfa/verify-login", a.verifyMFALogin)
 	mux.HandleFunc("POST /v1/auth/password/forgot", a.forgotPassword)
 	mux.HandleFunc("POST /v1/auth/password/reset", a.resetPassword)
+	mux.HandleFunc("POST /v1/auth/email/verify", a.verifyEmail)
 	mux.Handle("/v1/", a.authenticate(http.HandlerFunc(a.route)))
 	addr := env("HTTP_ADDR", ":8080")
 	server := &http.Server{Addr: addr, Handler: requestIDs(securityHeaders(metrics(cors(a.rateLimit(mux))))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
@@ -290,8 +297,9 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 			if p.sessionID != "" {
 				var name, email string
 				var expires time.Time
-				if err := a.db.QueryRowContext(r.Context(), `SELECT u.full_name,u.email,s.expires_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1`, p.sessionID).Scan(&name, &email, &expires); err == nil {
-					out["full_name"], out["email"], out["expires_at"] = name, email, expires
+				var verified bool
+				if err := a.db.QueryRowContext(r.Context(), `SELECT u.full_name,u.email,s.expires_at,u.email_verified_at IS NOT NULL FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1`, p.sessionID).Scan(&name, &email, &expires, &verified); err == nil {
+					out["full_name"], out["email"], out["expires_at"], out["email_verified"] = name, email, expires, verified
 				}
 			}
 			writeJSON(w, 200, out)
@@ -299,6 +307,18 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(seg) == 2 && seg[1] == "organizations" && r.Method == http.MethodGet {
 			a.userOrganizations(w, r)
+			return
+		}
+		if len(seg) == 3 && seg[1] == "email" && seg[2] == "resend" && r.Method == http.MethodPost {
+			a.resendVerification(w, r)
+			return
+		}
+		if len(seg) == 3 && seg[1] == "account" && seg[2] == "export" && r.Method == http.MethodGet {
+			a.exportAccount(w, r)
+			return
+		}
+		if len(seg) == 3 && seg[1] == "account" && seg[2] == "delete" && r.Method == http.MethodPost {
+			a.deleteAccount(w, r)
 			return
 		}
 		if len(seg) >= 2 && seg[1] == "sessions" {
@@ -380,6 +400,14 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		a.events(w, r, seg)
 	case "notification-channels":
 		a.notificationChannels(w, r, seg)
+	case "onboarding":
+		a.onboarding(w, r, seg)
+	case "feedback":
+		if len(seg) == 1 && r.Method == http.MethodPost {
+			a.feedback(w, r)
+		} else {
+			notFound(w, r)
+		}
 	case "reports":
 		if r.Method == "GET" && len(seg) == 2 && seg[1] == "transactions" {
 			a.transactionReport(w, r)
@@ -397,17 +425,22 @@ func bad(w http.ResponseWriter, r *http.Request, msg string) {
 	writeJSON(w, 400, problem{Error: msg, RequestID: requestID(r)})
 }
 func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) {
+	if len(s) == 2 && s[1] == "export" && r.Method == http.MethodGet {
+		a.exportWorkspace(w, r)
+		return
+	}
 	if len(s) == 1 && r.Method == http.MethodGet {
 		var x struct {
 			ID            string    `json:"id"`
 			Name          string    `json:"name"`
 			WorkspaceType string    `json:"workspace_type"`
+			Environment   string    `json:"environment"`
 			Slug          string    `json:"slug"`
 			Country       string    `json:"country_code"`
 			Status        string    `json:"status"`
 			CreatedAt     time.Time `json:"created_at"`
 		}
-		err := a.db.QueryRowContext(r.Context(), `SELECT id,name,workspace_type,slug,country_code,status,created_at FROM organizations WHERE id=$1`, currentOrgID(r, a.orgID)).Scan(&x.ID, &x.Name, &x.WorkspaceType, &x.Slug, &x.Country, &x.Status, &x.CreatedAt)
+		err := a.db.QueryRowContext(r.Context(), `SELECT id,name,workspace_type,environment,slug,country_code,status,created_at FROM organizations WHERE id=$1`, currentOrgID(r, a.orgID)).Scan(&x.ID, &x.Name, &x.WorkspaceType, &x.Environment, &x.Slug, &x.Country, &x.Status, &x.CreatedAt)
 		if err == sql.ErrNoRows {
 			notFound(w, r)
 		} else if err != nil {
@@ -428,6 +461,7 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			Slug          string `json:"slug"`
 			Country       string `json:"country_code"`
 			WorkspaceType string `json:"workspace_type"`
+			Environment   string `json:"environment"`
 		}
 		if decode(r, &in) != nil || strings.TrimSpace(in.Name) == "" {
 			bad(w, r, "name is required")
@@ -446,6 +480,20 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			bad(w, r, "workspace_type must be business or personal")
 			return
 		}
+		if in.Environment == "" {
+			in.Environment = "sandbox"
+		}
+		if in.Environment != "sandbox" && in.Environment != "live" {
+			bad(w, r, "environment must be sandbox or live")
+			return
+		}
+		if in.Environment == "live" {
+			var verified bool
+			if err := a.db.QueryRowContext(r.Context(), `SELECT email_verified_at IS NOT NULL FROM users WHERE id=$1`, p.userID).Scan(&verified); err != nil || !verified {
+				writeJSON(w, 403, problem{Error: "confirm your email address before creating a live workspace", RequestID: requestID(r)})
+				return
+			}
+		}
 		slug := makeSlug(in.Slug)
 		if slug == "" {
 			slug = makeSlug(in.Name)
@@ -458,7 +506,7 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			return
 		}
 		defer tx.Rollback()
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO organizations(id,name,slug,country_code,workspace_type) VALUES($1,$2,$3,$4,$5)`, orgID, in.Name, slug, in.Country, in.WorkspaceType); err == nil {
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO organizations(id,name,slug,country_code,workspace_type,environment) VALUES($1,$2,$3,$4,$5,$6)`, orgID, in.Name, slug, in.Country, in.WorkspaceType, in.Environment); err == nil {
 			_, err = tx.ExecContext(r.Context(), `INSERT INTO memberships(id,organization_id,user_id,role) VALUES($1,$2,$3,'owner')`, "mem_"+newID(), orgID, p.userID)
 		}
 		if err != nil {
@@ -469,7 +517,7 @@ func (a *App) organizations(w http.ResponseWriter, r *http.Request, s []string) 
 			writeJSON(w, 409, problem{Error: "organization creation conflict"})
 			return
 		}
-		writeJSON(w, 201, map[string]any{"id": orgID, "name": in.Name, "slug": slug, "country_code": in.Country, "workspace_type": in.WorkspaceType, "status": "active", "role": "owner"})
+		writeJSON(w, 201, map[string]any{"id": orgID, "name": in.Name, "slug": slug, "country_code": in.Country, "workspace_type": in.WorkspaceType, "environment": in.Environment, "status": "active", "role": "owner"})
 		return
 	}
 	notFound(w, r)
@@ -547,6 +595,9 @@ func (a *App) accounts(w http.ResponseWriter, r *http.Request, s []string) {
 		return
 	}
 	if len(s) == 3 && s[2] == "sandbox-credit" && r.Method == "POST" {
+		if !a.requireSandbox(w, r, currentOrgID(r, a.orgID)) {
+			return
+		}
 		var in struct {
 			Amount int64 `json:"amount"`
 		}

@@ -52,7 +52,7 @@ export function Hero() {
                 className="h-11 rounded-lg bg-primary px-5 text-[13.5px] font-semibold text-primary-foreground shadow-[0_10px_30px_rgba(90,75,255,0.28)] hover:bg-primary/90"
               >
                 <Link href="/register">
-                  Create sandbox account
+                  Create free account
                   <ArrowRight className="size-4" />
                 </Link>
               </Button>
@@ -70,7 +70,7 @@ export function Hero() {
               className="mt-6 flex items-start gap-2 text-[12px] leading-relaxed text-on-night-muted"
             >
               <ShieldCheck className="mt-0.5 size-4 shrink-0 text-mint" />
-              Sandbox only. Simulated ledger activity, no live payment provider and no card data.
+              Free to try with simulated money. No card data, and AegisPay never moves your funds.
             </motion.p>
           </div>
 

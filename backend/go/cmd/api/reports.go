@@ -137,9 +137,13 @@ func (a *App) transactionReport(w http.ResponseWriter, r *http.Request) {
 		writeTransactionCSV(w, data)
 		return
 	}
+	mode, notice := "sandbox", "Amounts describe recorded sandbox ledger activity; they do not represent provider settlement."
+	if environment, envErr := organizationEnvironment(r.Context(), a.db, org); envErr == nil && environment == "live" {
+		mode, notice = "live", "Amounts describe recorded ledger activity; your bank statements remain the record of settlement."
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode": "sandbox", "from": from, "to": to,
-		"notice":  "Amounts describe recorded sandbox ledger activity; they do not represent provider settlement.",
+		"mode": mode, "from": from, "to": to,
+		"notice":  notice,
 		"summary": summary, "data": data, "has_more": more, "next_cursor": nullable(next),
 	})
 }

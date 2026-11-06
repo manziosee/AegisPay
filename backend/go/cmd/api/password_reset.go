@@ -90,7 +90,8 @@ func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, problem{Error: "database error"})
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE users SET password_hash=$2 WHERE id=$1`, userID, string(hash))
+	// Using a link sent to the mailbox also proves the address is theirs.
+	_, err = tx.ExecContext(r.Context(), `UPDATE users SET password_hash=$2,email_verified_at=COALESCE(email_verified_at,now()) WHERE id=$1`, userID, string(hash))
 	if err == nil {
 		// Every outstanding link for this user stops working.
 		_, err = tx.ExecContext(r.Context(), `UPDATE password_reset_tokens SET used_at=now() WHERE user_id=$1 AND used_at IS NULL`, userID)
@@ -125,6 +126,14 @@ func (a *App) emailInvitation(r *http.Request, org, invitationID, address, role,
 	if p := principalFrom(r); p.userID != "" {
 		_ = a.db.QueryRowContext(r.Context(), `SELECT full_name FROM users WHERE id=$1`, p.userID).Scan(&inviter)
 	}
+	// Unconfirmed accounts cannot use AegisPay to email arbitrary addresses;
+	// they can still share the token themselves.
+	if p := principalFrom(r); p.userID != "" {
+		var verified bool
+		if err := a.db.QueryRowContext(r.Context(), `SELECT email_verified_at IS NOT NULL FROM users WHERE id=$1`, p.userID).Scan(&verified); err != nil || !verified {
+			return
+		}
+	}
 	inviter = firstNonEmpty(inviter, "A teammate")
 	link := dashboardURL() + "/invite?" + url.Values{"invitation": {invitationID}, "organization": {org}, "token": {token}}.Encode()
 	a.sendEmailAsync(email{
@@ -142,9 +151,9 @@ func (a *App) emailInvitation(r *http.Request, org, invitationID, address, role,
 // one is waiting. The initiator is excluded.
 func (a *App) emailApprovers(r *http.Request, org, initiatorID, what, amount, reference, path string) {
 	rows, err := a.db.QueryContext(r.Context(), `SELECT DISTINCT u.email,u.full_name FROM memberships m JOIN users u ON u.id=m.user_id
-		WHERE m.organization_id=$1 AND m.status='active' AND u.status='active' AND m.role IN ('owner','admin') AND u.id<>$2
+		WHERE m.organization_id=$1 AND m.status='active' AND u.status='active' AND m.role IN ('owner','admin') AND u.id<>$2 AND u.email_verified_at IS NOT NULL
 		UNION SELECT u.email,u.full_name FROM approval_delegations d JOIN users u ON u.id=d.delegate_user_id
-		WHERE d.organization_id=$1 AND d.revoked_at IS NULL AND d.expires_at>now() AND u.status='active' AND u.id<>$2
+		WHERE d.organization_id=$1 AND d.revoked_at IS NULL AND d.expires_at>now() AND u.status='active' AND u.id<>$2 AND u.email_verified_at IS NOT NULL
 		LIMIT 25`, org, initiatorID)
 	if err != nil {
 		return

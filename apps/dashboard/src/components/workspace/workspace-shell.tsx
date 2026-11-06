@@ -32,6 +32,9 @@ import { useCommand } from "@/components/providers/command-provider";
 import { useSession } from "@/components/providers/session-provider";
 import { useWorkspaceData } from "@/components/providers/workspace-data-provider";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
+import { EmailBanner } from "@/components/workspace/email-banner";
+import { FeedbackButton } from "@/components/workspace/feedback-button";
+import { LegalLinks } from "@/components/legal/legal-page";
 import { navGroups, visibleNav, type NavItem } from "@/lib/navigation";
 import { initials, roleLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -138,6 +141,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     ) ?? items[0];
   const totalAlerts = counts.pendingApprovals + counts.exceptionCount + counts.openCases;
   const organizationName = data.organization?.name ?? "Your workspace";
+  const isLive = data.organization?.environment === "live";
 
   const signOut = async () => {
     await logout();
@@ -155,7 +159,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <Wordmark size="sm" />
         </Link>
         <span className="rounded border border-white/12 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-on-night-muted">
-          Sandbox
+          {isLive ? "Live" : "Practice"}
         </span>
       </div>
 
@@ -171,9 +175,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <div className="mb-2 flex items-start gap-2 rounded-lg border border-mint/15 bg-mint/[0.06] px-2.5 py-2">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-mint" />
           <div>
-            <p className="text-[11px] font-medium text-[#bfe9dd]">Sandbox mode</p>
+            <p className="text-[11px] font-medium text-[#bfe9dd]">{isLive ? "Live workspace" : "Practice workspace"}</p>
             <p className="mt-0.5 text-[10px] leading-relaxed text-on-night-muted">
-              Simulated ledger activity only
+              {isLive ? "Money is confirmed by your bank statements" : "Simulated money, safe to explore"}
             </p>
           </div>
         </div>
@@ -374,10 +378,15 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
+        <EmailBanner />
         <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:py-7">
           {children}
           <footer className="mt-10 flex flex-col gap-2 border-t border-border pt-4 text-[10.5px] text-ink-400 sm:flex-row sm:items-center sm:justify-between">
-            <span>© {new Date().getFullYear()} AegisPay</span>
+            <span className="flex flex-wrap items-center gap-3">
+              © {new Date().getFullYear()} AegisPay
+              <LegalLinks />
+              <FeedbackButton />
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <AegisMark size={14} className="rounded-sm" />
               Internal ledger activity · no external funds moved

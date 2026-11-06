@@ -22,6 +22,7 @@ export function RegisterForm({ next }: { next?: string }) {
   const [fullName, setFullName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [country, setCountry] = useState("");
+  const [accepted, setAccepted] = useState(false);
   useEffect(() => {
     setCountry((current) => current || browserCountry());
   }, []);
@@ -55,7 +56,8 @@ export function RegisterForm({ next }: { next?: string }) {
         password,
         workspace_type: workspaceType,
         organization_name: organizationName,
-        country_code: country.trim().toUpperCase()
+        country_code: country.trim().toUpperCase(),
+        accepted_terms: accepted
       });
       router.replace(safeNext(next));
     } catch (submitError) {
@@ -208,6 +210,15 @@ export function RegisterForm({ next }: { next?: string }) {
           {error}
         </div>
       )}
+
+      <label className="flex items-start gap-2 text-[12px] leading-relaxed text-ink-600">
+        <input type="checkbox" required checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-0.5" />
+        <span>
+          I agree to the{" "}
+          <Link href="/terms" target="_blank" className="font-medium text-primary hover:underline">Terms of Service</Link> and{" "}
+          <Link href="/privacy" target="_blank" className="font-medium text-primary hover:underline">Privacy Policy</Link>.
+        </span>
+      </label>
 
       <Button
         type="submit"

@@ -35,7 +35,7 @@ func (a *App) rotateAPIKey(w http.ResponseWriter, r *http.Request, org, oldID st
 		writeJSON(w, 500, problem{Error: "API key scopes could not be decoded"})
 		return
 	}
-	token := "aegis_test_" + newID()
+	token := apiKeyPrefix(environment) + newID()
 	newIDValue := "key_" + newID()
 	_, err = tx.ExecContext(r.Context(), `UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND organization_id=$2`, oldID, org)
 	if err == nil {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BadgeCheck, ShieldCheck } from "lucide-react";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { EmptyState } from "@/components/ui-blocks/empty-state";
@@ -26,6 +26,15 @@ export default function ApprovalsPage() {
   }, [pending, selectedId]);
 
   const selected = pending.find((item) => item.id === selectedId);
+
+  // On phones the reviewer panel sits below the queue, so bring it into view.
+  const reviewerPanel = useRef<HTMLDivElement>(null);
+  const selectTransfer = (id: string) => {
+    setSelectedId(id);
+    if (window.innerWidth < 1024) {
+      window.setTimeout(() => reviewerPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    }
+  };
 
   return (
     <div>
@@ -82,11 +91,11 @@ export default function ApprovalsPage() {
                     <tr
                       key={item.id}
                       tabIndex={0}
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => selectTransfer(item.id)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          setSelectedId(item.id);
+                          selectTransfer(item.id);
                         }
                       }}
                       aria-selected={selectedId === item.id}
@@ -97,9 +106,9 @@ export default function ApprovalsPage() {
                     >
                       <td className="px-5 py-3">
                         <p className="font-mono text-[11.5px] text-ink-800">{item.reference}</p>
-                        <p className="mt-0.5 font-mono text-[9.5px] text-ink-300">{item.id}</p>
+                        <p className="mt-0.5 hidden font-mono text-[9.5px] text-ink-300 sm:block">{item.id}</p>
                       </td>
-                      <td className="px-4 py-3 font-mono text-[11.5px] text-ink-900">
+                      <td className="whitespace-nowrap px-4 py-3 font-mono text-[11.5px] text-ink-900">
                         {formatMinor(item.amount, item.currency)}
                       </td>
                       <td className="px-4 py-3 text-[11px] text-ink-500">
@@ -123,12 +132,14 @@ export default function ApprovalsPage() {
         </Panel>
 
         {selected ? (
-          <TransferPanel
-            transfer={selected}
-            busy={busyId === selected.id}
-            error={error}
-            onDecision={(transfer, decision) => void decide(transfer, decision)}
-          />
+          <div ref={reviewerPanel} className="scroll-mt-20">
+            <TransferPanel
+              transfer={selected}
+              busy={busyId === selected.id}
+              error={error}
+              onDecision={(transfer, decision) => void decide(transfer, decision)}
+            />
+          </div>
         ) : (
           <Panel>
             <PanelHeader title="Reviewer panel" description="Select a transfer to review" />

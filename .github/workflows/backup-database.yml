@@ -1,0 +1,75 @@
+name: Backup database
+
+# Nightly off-Fly copy of the production database, in addition to Fly's own
+# daily volume snapshots. The dump is encrypted before it leaves this job, and
+# each run proves it can be restored.
+#
+# Repository secrets:
+#   FLY_BACKUP_TOKEN     fly tokens create deploy --app aegispay-db
+#   BACKUP_DATABASE_URL  the API's DATABASE_URL with the host changed to
+#                        127.0.0.1:15432 (reached through a fly proxy tunnel)
+#   BACKUP_PASSPHRASE    long random text; without it backups cannot be read
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-database
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Open a tunnel to the database
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_BACKUP_TOKEN }}
+        run: |
+          flyctl proxy 15432:5432 --app aegispay-db > /tmp/proxy.log 2>&1 &
+          for i in $(seq 1 30); do
+            nc -z 127.0.0.1 15432 && exit 0
+            sleep 2
+          done
+          cat /tmp/proxy.log
+          exit 1
+      - name: Dump the database
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          docker run --rm --network host postgres:18-alpine pg_dump --format=custom --no-owner --dbname="$BACKUP_DATABASE_URL" > backup.dump
+          test -s backup.dump
+          ls -lh backup.dump
+      - name: Prove the backup restores
+        run: |
+          docker network create restore-check
+          docker run -d --name restore-db --network restore-check -e POSTGRES_PASSWORD=check -e POSTGRES_DB=restored postgres:18-alpine
+          for i in $(seq 1 30); do
+            docker exec restore-db pg_isready -U postgres -d restored && break
+            sleep 2
+          done
+          docker cp backup.dump restore-db:/tmp/backup.dump
+          docker exec restore-db pg_restore --no-owner --exit-on-error -U postgres -d restored /tmp/backup.dump
+          for table in organizations users journal_lines audit_logs; do
+            echo "$table: $(docker exec restore-db psql -U postgres -d restored -tAc "SELECT count(*) FROM $table")"
+          done
+          test "$(docker exec restore-db psql -U postgres -d restored -tAc 'SELECT count(*) FROM schema_migrations')" -gt 0
+          docker rm -f restore-db
+      - name: Encrypt
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          test -n "$BACKUP_PASSPHRASE"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" --symmetric --cipher-algo AES256 --output aegispay-backup.dump.gpg backup.dump
+          rm backup.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aegispay-backup-${{ github.run_id }}
+          path: aegispay-backup.dump.gpg
+          retention-days: 14
+          if-no-files-found: error

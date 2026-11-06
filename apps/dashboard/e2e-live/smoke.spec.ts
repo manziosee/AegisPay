@@ -45,6 +45,7 @@ test("a new business can run its core money workflows end to end", async ({ page
     await page.getByLabel("Country (two-letter code)").fill("DE");
     await page.getByLabel("Work email").fill(email);
     await page.locator("#register-password").fill("correct-horse-battery");
+    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: /Create account/ }).click();
     await page.waitForURL(/\/app/);
     await expect(page.getByRole("button", { name: "Switch workspace" })).toContainText(`Smoke ${id}`);
@@ -174,6 +175,7 @@ test("risk rules, developer tools, sessions and audit integrity work end to end"
     await page.getByLabel("Country (two-letter code)").fill("CA");
     await page.getByLabel("Work email").fill(`rules-${id}@example.com`);
     await page.locator("#register-password").fill("correct-horse-battery");
+    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: /Create account/ }).click();
     await page.waitForURL(/\/app/);
     await go(page, "Accounts", "Accounts");
@@ -261,6 +263,7 @@ test("statement files, chat notifications, password reset and invitations work e
     await page.getByLabel("Country (two-letter code)").fill("NL");
     await page.getByLabel("Work email").fill(ownerEmail);
     await page.locator("#register-password").fill("correct-horse-battery");
+    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: /Create account/ }).click();
     await page.waitForURL(/\/app/);
     await go(page, "Accounts", "Accounts");
@@ -325,6 +328,7 @@ test("statement files, chat notifications, password reset and invitations work e
     await invitee.getByLabel("Country (two-letter code)").fill("NL");
     await invitee.getByLabel("Work email").fill(inviteeEmail);
     await invitee.locator("#register-password").fill("correct-horse-battery");
+    await invitee.getByRole("checkbox").check();
     await invitee.getByRole("button", { name: /Create account/ }).click();
     await invitee.waitForURL(/\/invite\?/);
     await invitee.getByRole("button", { name: "Accept invitation" }).click();
@@ -343,4 +347,39 @@ test("statement files, chat notifications, password reset and invitations work e
     await page.goto("/reset-password");
     await expect(page.getByText("This page needs the link from your reset email.")).toBeVisible();
   });
+});
+
+test("practice workspaces offer sample data and every page fits a phone", async ({ page }) => {
+  test.setTimeout(240_000);
+  const id = Date.now().toString(36);
+  await page.goto("/register");
+  await page.getByLabel("Full name").fill("Phone Tester");
+  await page.getByLabel("Organization name").fill(`Phone ${id}`);
+  await page.getByLabel("Country (two-letter code)").fill("KE");
+  await page.getByLabel("Work email").fill(`phone-${id}@example.com`);
+  await page.locator("#register-password").fill("correct-horse-battery");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /Create account/ }).click();
+  await page.waitForURL(/\/app/);
+  await expect(page.getByText(/Confirm phone-.* to create live workspaces/)).toBeVisible();
+  await page.getByRole("button", { name: "Load sample data" }).click();
+  await expect(page.getByText(/Sample data added in KES/)).toBeVisible();
+  await expect(page.getByText("SAMPLE-TRF-3002").first()).toBeVisible();
+
+  await go(page, "Risk review", /risk/i);
+  await page.locator("#risk-reference").fill(`CHECK-${id}`);
+  await page.locator("#risk-amount").fill("3000000");
+  await page.locator("#risk-currency").fill("KES");
+  await page.locator('form:has(#risk-reference) button[type="submit"]').click();
+  await expect(page.getByText(/Sample: review large payouts \(review\)/)).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflowing: string[] = [];
+  for (const path of ["/app", "/app/transactions", "/app/approvals", "/app/payments", "/app/customers", "/app/reconciliation", "/app/money", "/app/intelligence", "/app/risk-rules", "/app/accounts", "/app/developers", "/app/webhooks", "/app/controls", "/app/team", "/app/settings", "/terms", "/privacy", "/cookies", "/"]) {
+    await page.goto(path);
+    await page.waitForLoadState("networkidle");
+    const widths = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, screen: window.innerWidth }));
+    if (widths.content > widths.screen + 1) overflowing.push(`${path}: ${widths.content}px`);
+  }
+  expect(overflowing, "pages wider than a 390px phone").toEqual([]);
 });

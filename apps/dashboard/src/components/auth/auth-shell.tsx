@@ -42,7 +42,7 @@ export function AuthShell({
             </h1>
             <p className="mt-4 max-w-[430px] text-[14px] leading-[1.75] text-on-night-muted">
               Collections, risk assessments, approvals, ledger postings and statement matches stay
-              together in one sandbox workspace.
+              together in one workspace.
             </p>
             <ul className="mt-6 space-y-2.5">
               {records.map(({ icon: Icon, text }) => (
@@ -86,7 +86,9 @@ export function AuthShell({
         </div>
 
         <p className="mx-auto mt-auto max-w-[400px] text-center text-[10.5px] leading-relaxed text-ink-400">
-          By continuing, you agree to use this sandbox for simulated business workflows only.
+          AegisPay records and checks payments; your bank or provider moves the money.{" "}
+          <Link href="/terms" className="underline">Terms</Link> ·{" "}
+          <Link href="/privacy" className="underline">Privacy</Link>
         </p>
       </main>
     </div>

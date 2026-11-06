@@ -1,3 +1,4 @@
+import { CookieNotice } from "@/components/legal/cookie-notice";
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import { IBM_Plex_Mono, Instrument_Sans, Instrument_Serif } from "next/font/google";
@@ -32,13 +33,13 @@ export const metadata: Metadata = {
     template: "%s · AegisPay"
   },
   description:
-    "A sandbox payment infrastructure workspace for collections, transfers, maker-checker approvals, reconciliation, risk review and webhook evidence. No live payment providers.",
+    "A workspace for collections, transfers, maker-checker approvals, reconciliation, risk review and audit evidence. Your bank moves the money; AegisPay keeps the proof.",
   applicationName: "AegisPay",
   keywords: ["payments", "ledger", "reconciliation", "fraud", "webhooks", "fintech", "sandbox"],
   openGraph: {
     title: "AegisPay — Ledger, risk and approvals for every payment",
     description:
-      "Run collections, approvals and reconciliation on one double-entry ledger. Sandbox only.",
+      "Run collections, approvals and reconciliation on one double-entry ledger.",
     type: "website"
   },
   robots: { index: true, follow: true }
@@ -69,7 +70,10 @@ export default async function RootLayout({
         suppressHydrationWarning
         className="min-h-screen bg-background font-sans text-foreground antialiased"
       >
-        <AppProviders>{children}</AppProviders>
+        <AppProviders>
+          {children}
+          <CookieNotice />
+        </AppProviders>
       </body>
     </html>
   );

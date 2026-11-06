@@ -20,7 +20,7 @@ test("public landing explains AegisPay and links to sign-in and sandbox registra
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
   await page.getByRole("link", { name: "Back to AegisPay" }).click();
 
-  await page.getByRole("link", { name: "Create sandbox account" }).first().click();
+  await page.getByRole("link", { name: "Create free account" }).first().click();
   await expect(page.getByRole("heading", { name: "Create your workspace" })).toBeVisible();
   await expect(page.getByLabel("Organization name")).toBeVisible();
 });
@@ -38,7 +38,7 @@ test("landing page fits a mobile viewport without horizontal scrolling", async (
 
 test("individuals can choose a personal workspace without an organization name", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Create sandbox account" }).first().click();
+  await page.getByRole("link", { name: "Create free account" }).first().click();
   await expect(page.getByRole("heading", { name: "Create your workspace" })).toBeVisible();
   // The visibility toggle only responds once the client component has hydrated.
   await ensureHydratedPasswordToggle(page, "#register-password");

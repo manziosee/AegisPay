@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: backend/go/go.sum
       - name: Check formatting of new and maintained files
         run: |
-          unformatted=$(gofmt -l cmd/api/client_ip.go cmd/api/close_period_guard.go cmd/api/docs.go cmd/api/maintenance.go cmd/api/reconciliation_import.go cmd/api/secret_box.go cmd/api/webhooks.go cmd/api/rate_limit.go cmd/api/risk_rules.go cmd/api/events.go cmd/api/sessions.go cmd/api/organizations.go cmd/api/audit_logs.go)
+          unformatted=$(gofmt -l cmd/api/client_ip.go cmd/api/close_period_guard.go cmd/api/docs.go cmd/api/maintenance.go cmd/api/reconciliation_import.go cmd/api/secret_box.go cmd/api/webhooks.go cmd/api/rate_limit.go cmd/api/risk_rules.go cmd/api/events.go cmd/api/sessions.go cmd/api/organizations.go cmd/api/audit_logs.go cmd/api/account.go cmd/api/email_verification.go cmd/api/environment.go cmd/api/fraud.go cmd/api/mailer.go cmd/api/password_reset.go cmd/api/sample_data.go)
           if [ -n "$unformatted" ]; then echo "Run gofmt on: $unformatted"; exit 1; fi
       - run: go vet ./...
       - run: go test -count=1 ./...

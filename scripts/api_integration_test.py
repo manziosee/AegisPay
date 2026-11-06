@@ -9,7 +9,7 @@ workspace, so it is safe against a sandbox deployment.
 Set AUDIT_PSQL_URL to a database URL to also check that the database refuses
 audit log edits, and AEGIS_API_KEY to verify the bootstrap organization's chain.
 """
-import json, os, subprocess, sys, uuid, urllib.request, urllib.error
+import hashlib, json, os, subprocess, sys, uuid, urllib.request, urllib.error
 
 API = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:58080"
 results = []
@@ -165,7 +165,6 @@ s, fp = call("POST", "/v1/auth/password/forgot", b={"email": email})
 s2, fp2 = call("POST", "/v1/auth/password/forgot", b={"email": f"nobody-{uuid.uuid4().hex[:6]}@example.com"})
 ok("forgot password answers the same for known and unknown emails", s == 202 and s2 == 202 and fp == fp2, (s, fp, s2, fp2))
 token = "aegis_reset_" + uuid.uuid4().hex
-import hashlib
 inserted = run_sql(f"INSERT INTO password_reset_tokens(token_hash,user_id,expires_at) SELECT '{hashlib.sha256(token.encode()).hexdigest()}',id,now()+interval '1 hour' FROM users WHERE email='{email}' RETURNING 1")
 if inserted is not None:
     s, short = call("POST", "/v1/auth/password/reset", b={"token": token, "password": "short"})
@@ -195,6 +194,89 @@ ok("remove chat channel", s == 200, (s, d))
 # --- invitation and approval emails (logged when no email provider) -------
 s, inv = call("POST", "/v1/invitations", t, {"email": f"invitee-{uuid.uuid4().hex[:6]}@example.com", "role": "auditor"})
 ok("invitation still returns its one-time token", s == 201 and inv.get("invite_token", "").startswith("aegis_invite_"), (s, inv))
+
+
+# --- risk evaluation without any external service ----------------------------
+s, assess = call("POST", "/v1/fraud/analyze", t, {"transaction_reference": "MANUAL-1", "amount": 200_000, "currency": "EUR"})
+ok("evaluate transaction works from the rules engine", s == 200 and assess["decision"] == "review" and assess["model_version"] == "rules-v1" and assess["matched_rules"], (s, assess))
+
+# --- email verification, sample data, practice versus live ---------------------
+fresh = f"fresh-{uuid.uuid4().hex[:8]}@example.com"
+s, F = call("POST", "/v1/auth/register", b={"full_name": "Fresh User", "email": fresh, "password": "correct-horse-battery", "organization_name": "Fresh Ltd", "country_code": "KE", "accepted_terms": True})
+ft = F["access_token"]
+s, me = call("GET", "/v1/auth/me", ft)
+ok("a new account starts unverified", me.get("email_verified") is False, me)
+s, live = call("POST", "/v1/organizations", ft, {"name": "Fresh Live", "country_code": "KE", "environment": "live"})
+ok("unverified accounts cannot create a live workspace", s == 403, (s, live))
+vtoken = "aegis_verify_" + uuid.uuid4().hex
+if run_sql(f"INSERT INTO email_verification_tokens(token_hash,user_id,expires_at) SELECT '{hashlib.sha256(vtoken.encode()).hexdigest()}',id,now()+interval '1 hour' FROM users WHERE email='{fresh}' RETURNING 1") is not None:
+    s, v = call("POST", "/v1/auth/email/verify", b={"token": vtoken})
+    ok("email confirmation link works", s == 200, (s, v))
+    s, v = call("POST", "/v1/auth/email/verify", b={"token": vtoken})
+    ok("email confirmation link works once", s == 400, (s, v))
+    s, me = call("GET", "/v1/auth/me", ft)
+    ok("account is verified afterwards", me.get("email_verified") is True, me)
+    s, live = call("POST", "/v1/organizations", ft, {"name": "Fresh Live", "country_code": "KE", "environment": "live"})
+    ok("verified account creates a live workspace", s == 201 and live["environment"] == "live", (s, live))
+    lorg = live["id"]
+    def lcall(m, p, b=None, idem=False):
+        h_org = {"X-Organization-ID": lorg}
+        h = {"Content-Type": "application/json", "Authorization": "Bearer " + ft, **h_org}
+        if idem:
+            h["Idempotency-Key"] = "k_" + uuid.uuid4().hex
+        r = urllib.request.Request(API + p, data=None if b is None else json.dumps(b).encode(), method=m, headers=h)
+        try:
+            with urllib.request.urlopen(r, timeout=30) as x:
+                return x.status, json.loads(x.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+    s, la = lcall("POST", "/v1/accounts", {"currency": "KES"})
+    s, c = lcall("POST", f"/v1/accounts/{la['id']}/sandbox-credit", {"amount": 1000}, idem=True)
+    ok("live workspace refuses simulated credits", s == 403, (s, c))
+    lref = "LIVE-" + uuid.uuid4().hex[:6]
+    s, lc = lcall("POST", "/v1/collections", {"amount": 50000, "currency": "KES", "reference": lref}, idem=True)
+    s, c = lcall("POST", f"/v1/collections/{lc['id']}/sandbox-confirm", {"account_id": la["id"]}, idem=True)
+    ok("live workspace refuses simulated confirmation", s == 403, (s, c))
+    s, imp = lcall("POST", "/v1/reconciliation/imports", {"lines": [{"external_reference": lref, "amount": 49000, "provider_fee": 1000, "currency": "KES", "transaction_date": "2026-01-20T10:00:00Z"}]}, idem=True)
+    ok("a bank statement line confirms a live collection", s == 201 and imp["matched_count"] == 1 and imp["collections_confirmed"] == 1 and imp["mode"] == "live", (s, imp))
+    s, got = lcall("GET", f"/v1/collections/{lc['id']}")
+    ok("the collection is now succeeded", got.get("status") == "succeeded", got)
+    s, bal = lcall("GET", f"/v1/accounts/{la['id']}/balance")
+    ok("the money reached the main account's balance", bal.get("balance_minor") == 50000, bal)
+    s, key = lcall("POST", "/v1/api-keys", {"name": "live key"})
+    ok("live workspace issues live API keys", s == 201 and key["secret"].startswith("aegis_live_") and key["environment"] == "live", (s, key))
+    s, smp = lcall("POST", "/v1/onboarding/sample-data", {})
+    ok("sample data is refused in a live workspace", s == 409, (s, smp))
+s, st = call("GET", "/v1/onboarding/status", ft)
+ok("onboarding status starts without sample data", s == 200 and st["sample_data_loaded"] is False, (s, st))
+s, smp = call("POST", "/v1/onboarding/sample-data", ft, {})
+ok("sample data loads in the workspace's currency", s == 201 and smp["currency"] == "KES", (s, smp))
+s, smp2 = call("POST", "/v1/onboarding/sample-data", ft, {})
+ok("sample data loads only once", s == 409, (s, smp2))
+s, rep = call("GET", "/v1/reports/transactions", ft)
+ok("sample activity appears in reports", s == 200 and any(x["reference"].startswith("SAMPLE-") for x in rep["data"]), (s, rep.get("summary")))
+s, pend = call("GET", "/v1/transfers?limit=10", ft)
+pending = next((x for x in pend["data"] if x["status"] == "pending_approval"), None)
+s, ap = call("POST", f"/v1/transfers/{pending['id']}/approve", ft, {}, idem=True)
+ok("owner can approve the sample transfer (it posts against sample funds)", s == 200 and ap["status"] == "completed", (s, ap))
+
+# --- exports, feedback, deletion ------------------------------------------------
+s, ex = call("GET", "/v1/auth/account/export", ft)
+ok("personal data export", s == 200 and ex["profile"][0]["email"] == fresh and "password_hash" not in json.dumps(ex), (s, list(ex)[:6]))
+s, wx = call("GET", "/v1/organizations/export", ft)
+ok("workspace export has records and no secrets", s == 200 and len(wx["collections"]) >= 6 and "secret" not in json.dumps(wx), (s, list(wx)[:6]))
+s, fb = call("POST", "/v1/feedback", ft, {"message": "   "})
+ok("empty feedback refused", s == 400, (s, fb))
+s, bad_del = call("POST", "/v1/auth/account/delete", ft, {"password": "wrong-password-value"})
+ok("deleting an account needs the correct password", s == 401, (s, bad_del))
+s, gone = call("POST", "/v1/auth/account/delete", ft, {"password": "correct-horse-battery"})
+ok("account deletion closes solely owned workspaces", s == 200 and gone["workspaces_closed"] >= 1, (s, gone))
+s, _ = call("GET", "/v1/auth/me", ft)
+ok("sessions end after deletion", s == 401, s)
+s, _ = call("POST", "/v1/auth/login", b={"email": fresh, "password": "correct-horse-battery"})
+ok("a deleted account cannot sign in", s in (401, 429), s)  # 429: this run used up the per-IP login limit
+s, again = call("POST", "/v1/auth/register", b={"full_name": "Fresh Again", "email": fresh, "password": "correct-horse-battery", "organization_name": "Fresh Again Ltd", "country_code": "KE"})
+ok("the email address can be registered again", s == 201, (s, again))
 
 print(f"\n{sum(results)}/{len(results)} checks passed")
 sys.exit(0 if all(results) else 1)
