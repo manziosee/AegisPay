@@ -236,4 +236,3 @@ func runSeedCommand(ctx context.Context, db *sql.DB, emails []string) {
 		fmt.Printf("%s: sample data added to %q in %v\n", address, name, result["currency"])
 	}
 }
-
