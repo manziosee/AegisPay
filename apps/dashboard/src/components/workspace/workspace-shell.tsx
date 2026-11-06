@@ -14,7 +14,7 @@ import {
   Settings,
   ShieldCheck
 } from "lucide-react";
-import { Wordmark, AegisMark } from "@/components/brand/logo";
+import { Wordmark } from "@/components/brand/logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -33,8 +33,6 @@ import { useSession } from "@/components/providers/session-provider";
 import { useWorkspaceData } from "@/components/providers/workspace-data-provider";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { EmailBanner } from "@/components/workspace/email-banner";
-import { FeedbackButton } from "@/components/workspace/feedback-button";
-import { LegalLinks } from "@/components/legal/legal-page";
 import { navGroups, visibleNav, type NavItem } from "@/lib/navigation";
 import { initials, roleLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -381,17 +379,6 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <EmailBanner />
         <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:py-7">
           {children}
-          <footer className="mt-10 flex flex-col gap-2 border-t border-border pt-4 text-[10.5px] text-ink-400 sm:flex-row sm:items-center sm:justify-between">
-            <span className="flex flex-wrap items-center gap-3">
-              © {new Date().getFullYear()} AegisPay
-              <LegalLinks />
-              <FeedbackButton />
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <AegisMark size={14} className="rounded-sm" />
-              Internal ledger activity · no external funds moved
-            </span>
-          </footer>
         </main>
       </div>
     </div>
