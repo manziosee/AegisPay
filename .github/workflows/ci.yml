@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: backend/go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
@@ -62,7 +62,7 @@ jobs:
       HTTP_ADDR: 127.0.0.1:8080
       ENCRYPTION_KEYS: k1:0000000000000000000000000000000000000000000000000000000000000001
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
@@ -86,7 +86,7 @@ jobs:
     name: OpenAPI contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: apps/dashboard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
