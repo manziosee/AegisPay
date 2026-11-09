@@ -31,6 +31,7 @@ export default function WebhooksPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [busy, setBusy] = useState("");
   const [selected, setSelected] = useState<WebhookDelivery | null>(null);
+  const [deliveryFilter, setDeliveryFilter] = useState("");
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -56,6 +57,9 @@ export default function WebhooksPage() {
 
   const endpointUrl = (id: string) =>
     endpoints.find((endpoint) => endpoint.id === id)?.url ?? id;
+  const filteredDeliveries = deliveryFilter
+    ? deliveries.filter((delivery) => delivery.status === deliveryFilter)
+    : deliveries;
 
   const loadMore = async () => {
     if (!session || !cursor) return;
@@ -103,12 +107,27 @@ export default function WebhooksPage() {
       <Panel>
         <PanelHeader
           title="Webhook deliveries"
-          description={`${deliveries.length} loaded · ${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`}
+          description={`${filteredDeliveries.length} of ${deliveries.length} loaded · ${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`}
           action={
-            <Button variant="outline" size="sm" className="h-8 text-[11.5px]" onClick={() => void load()}>
-              <RefreshCw className="size-3.5" />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <select
+                aria-label="Filter deliveries by status"
+                value={deliveryFilter}
+                onChange={(event) => setDeliveryFilter(event.target.value)}
+                className="h-8 rounded-md border border-input bg-background px-2 text-[11.5px]"
+              >
+                <option value="">All statuses</option>
+                {["queued", "sending", "retrying", "delivered", "failed"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <Button variant="outline" size="sm" className="h-8 text-[11.5px]" onClick={() => void load()}>
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </Button>
+            </div>
           }
         />
         {loading ? (
@@ -117,11 +136,15 @@ export default function WebhooksPage() {
               <div key={index} className="h-11 animate-pulse rounded-md bg-paper-muted" />
             ))}
           </div>
-        ) : deliveries.length === 0 ? (
+        ) : filteredDeliveries.length === 0 ? (
           <EmptyState
             icon={Webhook}
-            title="No webhook deliveries"
-            text="Events are queued for active endpoints when financial records change."
+            title={deliveries.length === 0 ? "No webhook deliveries" : "No deliveries match"}
+            text={
+              deliveries.length === 0
+                ? "Events are queued for active endpoints when financial records change."
+                : "Clear the status filter to see the loaded delivery attempts."
+            }
           />
         ) : (
           <div className="overflow-x-auto">
@@ -141,7 +164,7 @@ export default function WebhooksPage() {
                 </tr>
               </thead>
               <tbody>
-                {deliveries.map((item) => (
+                {filteredDeliveries.map((item) => (
                   <tr
                     key={item.id}
                     tabIndex={0}

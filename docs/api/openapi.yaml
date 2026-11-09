@@ -39,6 +39,11 @@ paths:
       summary: Interactive API reference (Swagger UI)
       responses:
         '200': {description: HTML page}
+  /audit-pack-keys:
+    get:
+      security: []
+      summary: Public Ed25519 keys that sign audit packs
+      responses: {'200': {description: Keys in PEM form with their ids}}
   /openapi.yaml:
     get:
       security: []
@@ -305,9 +310,23 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
   /v1/customers/{id}:
     get:
-      summary: Retrieve customer
+      summary: Retrieve a customer with their accounts and payment requests
+      description: Includes accounts with balances, totals per currency and status, and the ten latest payment requests.
       parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'200': {description: Customer}, '404': {description: Not found}}
+      responses: {'200': {description: Customer detail}, '404': {description: Not found}}
+    patch:
+      summary: Edit or archive a customer
+      description: Send any of name, email, phone or status. An empty email or phone removes it. Archived customers get no new accounts or payment requests.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, properties: {name: {type: string, maxLength: 200}, email: {type: string}, phone: {type: string, maxLength: 40}, status: {type: string, enum: [active, archived]}}}}}
+      responses: {'200': {description: Customer updated and audited}, '400': {description: Invalid value}, '404': {description: Not found}, '409': {description: Email already used by another customer}}
+    delete:
+      summary: Delete a customer, or archive one with history
+      description: A customer with no accounts or payment requests is deleted; otherwise they are archived so the ledger keeps pointing at them.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: 'status is deleted or archived'}, '404': {description: Not found}}
   /v1/accounts:
     get:
       summary: List organization accounts
@@ -463,6 +482,25 @@ paths:
         required: true
         content: {application/json: {schema: {type: object, required: [lines], properties: {source_name: {type: string}, lines: {type: array, minItems: 1, maxItems: 10000, items: {type: object, required: [external_reference, amount, currency], properties: {external_reference: {type: string}, amount: {type: integer, minimum: 1, description: Net settlement in minor currency units}, provider_fee: {type: integer, minimum: 0, default: 0, description: Provider fee in minor currency units}, currency: {type: string, minLength: 3, maxLength: 3}, transaction_date: {type: string, format: date-time}}}}}}}}
       responses: {'201': {description: 'Import created with matched_count, exception_count, and reconciled or needs_review status'}}
+  /v1/reconciliation/imports/provider:
+    post:
+      summary: Import a Stripe, M-Pesa or Flutterwave export
+      description: |-
+        Reads the CSV each provider's dashboard exports (Stripe balance history or itemized balance report,
+        Safaricom M-PESA business statement, Flutterwave transactions export). Completed incoming payments
+        become statement lines (net amount plus fee) and are matched like a bank statement. Payouts to the
+        bank, charges and failed attempts are skipped and counted. Lines whose reference matches nothing get
+        a suggested collection with a plain-language reason; a person must accept it.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [csv], properties: {provider: {type: string, enum: [auto, stripe, mpesa, flutterwave], default: auto}, source_name: {type: string}, csv: {type: string, maxLength: 2097152}}}}}
+      responses: {'201': {description: 'Import result with provider, skipped_rows and suggested_count'}, '400': {description: Unreadable file or a file from another provider}}
+  /v1/reconciliation/sources:
+    get:
+      summary: Compare every statement source side by side
+      description: Per provider and currency, lines imported, matched and still open, open amount, provider fees and suggestions waiting.
+      responses: {'200': {description: Source summaries}}
   /v1/reconciliation/imports/csv:
     post:
       summary: Import a bank statement CSV
@@ -695,6 +733,20 @@ paths:
       summary: Delete a risk rule
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'200': {description: Rule deleted}, '404': {description: Not found}}
+  /v1/risk-rules/templates:
+    get:
+      summary: Ready-made rule sets for NGOs, retail shops, freelancers and cooperatives
+      description: Limits are set in US dollars and scaled to the workspace currency (or the currency query parameter).
+      parameters: [{name: currency, in: query, schema: {type: string, minLength: 3, maxLength: 3}}]
+      responses: {'200': {description: Templates with their rules}}
+  /v1/risk-rules/templates/{id}/apply:
+    post:
+      summary: Add a template's rules to the workspace
+      description: Rules already present by name are skipped, so applying twice adds nothing.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        content: {application/json: {schema: {type: object, properties: {currency: {type: string}}}}}
+      responses: {'201': {description: 'created and already_present counts'}, '404': {description: Unknown template}}
   /v1/risk-rules/evaluate:
     post:
       summary: Dry-run the rules against a hypothetical payment
@@ -712,6 +764,24 @@ paths:
       summary: Queue a failed webhook delivery for another attempt
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses: {'202': {description: Delivery queued}, '404': {description: Failed delivery or active endpoint not found}}
+  /v1/audit-logs/anchors:
+    get:
+      summary: Daily public timestamps of the audit chain
+      description: |-
+        Once a day the chain head is written into a short statement whose SHA-256 is timestamped with
+        OpenTimestamps (anchored in Bitcoin). Enabled when AUDIT_ANCHOR_CALENDARS is set; enabled reports that.
+      responses: {'200': {description: 'Anchors with status pending, stamped or failed'}}
+  /v1/audit-logs/anchors/{date}/statement:
+    get:
+      summary: Download a day's anchor statement (text)
+      parameters: [{name: date, in: path, required: true, schema: {type: string, format: date}}]
+      responses: {'200': {description: Statement text}, '404': {description: No anchor that day}}
+  /v1/audit-logs/anchors/{date}/proof:
+    get:
+      summary: Download a day's OpenTimestamps proof (.ots)
+      description: Check it with `ots verify` next to the statement file.
+      parameters: [{name: date, in: path, required: true, schema: {type: string, format: date}}]
+      responses: {'200': {description: OpenTimestamps proof file}, '404': {description: No anchor that day}, '409': {description: Proof not ready yet}}
   /v1/audit-logs/verify:
     get:
       summary: Verify the tamper-evident audit hash chain
@@ -728,6 +798,36 @@ paths:
         - {$ref: '#/components/parameters/ReportLimit'}
         - {$ref: '#/components/parameters/ReportCursor'}
       responses: {'200': {description: Cursor-paginated audit events}}
+  /v1/reports/activity:
+    get:
+      summary: Money in and out per day, balances, and payment requests by status
+      description: Money in and out counts ledger postings on held (non-clearing) accounts; moves between the workspace's own accounts net to zero and are left out.
+      parameters:
+        - {name: days, in: query, schema: {type: integer, minimum: 7, maximum: 365, default: 30}}
+        - {name: currency, in: query, schema: {type: string}, description: Defaults to the currency with the largest balance}
+      responses: {'200': {description: Activity series and totals}}
+  /v1/reports/forecast:
+    get:
+      summary: Cash runway and projected balance
+      description: |-
+        The known projection adds open payment requests, pending collections and unconfirmed payouts
+        and subtracts average daily spending; the typical projection continues the last 90 days' averages.
+        runway_days is when the known projection falls below zero, or null if it stays above zero.
+      parameters:
+        - {name: days, in: query, schema: {type: integer, minimum: 14, maximum: 365, default: 90}}
+        - {name: currency, in: query, schema: {type: string}}
+      responses: {'200': {description: 'History, projections, runway and expected items'}}
+  /v1/reports/audit-pack:
+    get:
+      summary: Download the signed month-end audit pack (ZIP)
+      description: |-
+        Ledger, approvals, reconciliation, risk decisions and audit log CSVs for the month, that month's
+        public timestamp proofs, the audit-chain check, a manifest with every file's SHA-256, and an
+        Ed25519 signature of the manifest. Public keys are at /audit-pack-keys.
+      parameters: [{name: month, in: query, schema: {type: string, example: '2026-10'}, description: Defaults to the previous month (UTC)}]
+      responses:
+        '200': {description: ZIP archive, content: {application/zip: {schema: {type: string, format: binary}}}}
+        '400': {description: Malformed or future month}
   /v1/reports/transactions:
     get:
       summary: Search and export organization transaction activity

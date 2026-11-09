@@ -10,11 +10,43 @@ import (
 
 func (a *App) transactionPolicies(w http.ResponseWriter, r *http.Request, parts []string) {
 	org := currentOrgID(r, a.orgID)
-	if len(parts) != 1 {
+	if len(parts) != 1 && !(len(parts) == 2 && r.Method == http.MethodDelete) {
 		notFound(w, r)
 		return
 	}
-	if r.Method == http.MethodGet {
+	if len(parts) == 2 && r.Method == http.MethodDelete {
+		currency := strings.ToUpper(strings.TrimSpace(parts[1]))
+		if len(currency) != 3 || !asciiCurrency(currency) {
+			bad(w, r, "currency must be a three-letter code")
+			return
+		}
+		tx, err := a.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		defer tx.Rollback()
+		res, err := tx.ExecContext(r.Context(), `DELETE FROM transaction_policies WHERE organization_id=$1 AND currency=$2`, org, currency)
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "transaction policy could not be removed"})
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			notFound(w, r)
+			return
+		}
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'transaction_policy.deleted','transaction_policy',$4,jsonb_build_object('currency',$4::text))`, "aud_"+newID(), org, nullable(principalFrom(r).userID), currency); err != nil {
+			writeJSON(w, 500, problem{Error: "transaction policy audit could not be recorded"})
+			return
+		}
+		if err = tx.Commit(); err != nil {
+			writeJSON(w, 409, problem{Error: "transaction policy deletion conflict"})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"currency": currency, "status": "deleted"})
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodGet {
 		rows, err := a.db.QueryContext(r.Context(), `SELECT currency,max_single_minor,daily_collection_minor,daily_transfer_minor,approval_threshold_minor,required_approvals,updated_at FROM transaction_policies WHERE organization_id=$1 ORDER BY currency`, org)
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "transaction policies unavailable"})

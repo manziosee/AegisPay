@@ -94,7 +94,20 @@ export type FraudCase = {
   transaction_reference: string;
   risk_score: number;
   risk_level: string;
+  model_version?: string;
+  currency?: string;
+  amount_minor?: number;
 };
+
+export type FraudCaseNote = {
+  id: string;
+  note: string;
+  created_at: string;
+  author_id: string | null;
+  author_name: string;
+};
+
+export type FraudCaseDetail = FraudCase & { notes: FraudCaseNote[] };
 
 export type RiskDecision = "allow" | "review" | "block";
 
@@ -113,6 +126,7 @@ export type ReconciliationImport = {
   id: string;
   status: string;
   source_name: string;
+  provider?: string;
   line_count: number;
   matched_count: number;
   exception_count: number;
@@ -130,6 +144,8 @@ export type ReconciliationLine = {
   match_status: string;
   collection_id: string | null;
   suggestion_reason?: string;
+  suggested_collection_id?: string | null;
+  suggestion_score?: number | null;
   duplicate_of?: number | null;
   payment_request_id?: string | null;
   payout_id?: string | null;
@@ -151,6 +167,7 @@ export type Account = {
   currency: string;
   account_type: string;
   status: string;
+  label?: string | null;
   created_at: string;
   balance_minor?: number;
   balanceError?: string;
@@ -251,6 +268,7 @@ export type Invitation = {
   role: Role;
   expires_at: string;
   accepted_at: string | null;
+  created_at?: string;
 };
 
 export type WebhookEndpoint = {
@@ -338,6 +356,72 @@ export type Customer = {
   phone: string | null;
   status: string;
   created_at: string;
+  updated_at?: string | null;
+};
+
+export type CustomerDetail = Customer & {
+  accounts: { id: string; currency: string; account_type: string; status: string; label: string | null; balance_minor: number }[];
+  collection_totals: { currency: string; status: string; count: number; amount_minor: number }[];
+  recent_collections: { id: string; reference: string; amount: number; currency: string; status: string; created_at: string }[];
+};
+
+export type ActivityReport = {
+  currency: string;
+  days: number;
+  series: { date: string; money_in: number; money_out: number }[];
+  total_in: number;
+  total_out: number;
+  balances: { currency: string; balance_minor: number }[];
+  collections_by_status: { status: string; count: number; amount_minor: number }[];
+};
+
+export type CashForecast = {
+  currency: string;
+  balance_minor: number;
+  horizon_days: number;
+  average_daily_in: number;
+  average_daily_out: number;
+  expected_in: number;
+  expected_out: number;
+  runway_days: number | null;
+  history: { date: string; balance: number }[];
+  projection: { date: string; known: number; typical: number }[];
+  expected: { kind: "payment_request" | "collection" | "payout"; id: string; reference: string; amount_minor: number; expected_on: string; overdue: boolean }[];
+  balances: { currency: string; balance_minor: number }[];
+  note: string;
+};
+
+export type AuditAnchor = {
+  date: string;
+  head_hash: string;
+  last_entry_id: string;
+  entry_count: number;
+  digest: string;
+  status: "pending" | "stamped" | "failed";
+  calendars: string[];
+  created_at: string;
+};
+
+export type ReconciliationSource = {
+  provider: string;
+  currency: string;
+  import_count: number;
+  line_count: number;
+  matched_count: number;
+  open_count: number;
+  matched_amount: number;
+  open_amount: number;
+  provider_fees: number;
+  suggested_count: number;
+  last_import_at: string;
+};
+
+export type RiskRuleTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  currency: string;
+  rules: { name: string; applies_to: string[]; action: string; currency: string | null; min_amount_minor: number | null; velocity_count: number | null; velocity_window_minutes: number | null }[];
 };
 
 export type ApiKey = {
@@ -414,6 +498,7 @@ export type UserSession = {
 export type AuditVerification = {
   valid: boolean;
   checked: number;
+  anchors_checked?: number;
   head_hash?: string;
   first_invalid_id?: string;
   detail?: string;

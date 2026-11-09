@@ -13,6 +13,14 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 		a.importStatementFile(w, r)
 		return
 	}
+	if len(parts) == 3 && parts[1] == "imports" && parts[2] == "provider" && r.Method == http.MethodPost {
+		a.importProviderStatement(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "sources" && r.Method == http.MethodGet {
+		a.reconciliationSources(w, r, org)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "imports" && parts[2] == "csv" && r.Method == http.MethodPost {
 		a.importStatementCSV(w, r)
 		return
@@ -30,10 +38,10 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 		return
 	}
 	if len(parts) == 3 && parts[1] == "imports" && r.Method == http.MethodGet {
-		var status, source string
+		var status, source, provider string
 		var count int
 		var created time.Time
-		err := a.db.QueryRowContext(r.Context(), `SELECT status,source_name,line_count,created_at FROM reconciliation_imports WHERE id=$1 AND organization_id=$2`, parts[2], org).Scan(&status, &source, &count, &created)
+		err := a.db.QueryRowContext(r.Context(), `SELECT status,source_name,line_count,created_at,provider FROM reconciliation_imports WHERE id=$1 AND organization_id=$2`, parts[2], org).Scan(&status, &source, &count, &created, &provider)
 		if err == sql.ErrNoRows {
 			notFound(w, r)
 			return
@@ -42,7 +50,7 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 			writeJSON(w, 500, problem{Error: "database error"})
 			return
 		}
-		rows, err := a.db.QueryContext(r.Context(), `SELECT id,external_reference,amount_minor,currency,transaction_date,match_status,matched_collection_id,provider_fee_minor,matched_request_id,matched_payout_id,duplicate_of,suggestion_reason FROM reconciliation_lines WHERE import_id=$1 AND organization_id=$2 ORDER BY id`, parts[2], org)
+		rows, err := a.db.QueryContext(r.Context(), `SELECT id,external_reference,amount_minor,currency,transaction_date,match_status,matched_collection_id,provider_fee_minor,matched_request_id,matched_payout_id,duplicate_of,suggestion_reason,suggested_collection_id,suggestion_score FROM reconciliation_lines WHERE import_id=$1 AND organization_id=$2 ORDER BY id`, parts[2], org)
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
 			return
@@ -59,7 +67,9 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 			var requestID, payoutID sql.NullString
 			var duplicateOf sql.NullInt64
 			var suggestion string
-			if rows.Scan(&lineID, &ref, &amount, &currency, &date, &match, &collection, &providerFee, &requestID, &payoutID, &duplicateOf, &suggestion) != nil {
+			var suggestedID sql.NullString
+			var suggestedScore sql.NullInt64
+			if rows.Scan(&lineID, &ref, &amount, &currency, &date, &match, &collection, &providerFee, &requestID, &payoutID, &duplicateOf, &suggestion, &suggestedID, &suggestedScore) != nil {
 				writeJSON(w, 500, problem{Error: "reconciliation lines could not be read"})
 				return
 			}
@@ -67,13 +77,13 @@ func (a *App) reconciliation(w http.ResponseWriter, r *http.Request, parts []str
 			if collection.Valid {
 				collectionID = collection.String
 			}
-			lines = append(lines, map[string]any{"line_id": lineID, "external_reference": ref, "amount": amount, "provider_fee": providerFee, "gross_amount": amount + providerFee, "currency": strings.TrimSpace(currency), "transaction_date": date, "match_status": match, "collection_id": collectionID, "payment_request_id": nullableNull(requestID), "payout_id": nullableNull(payoutID), "duplicate_of": nullableInt64(duplicateOf), "suggestion_reason": suggestion})
+			lines = append(lines, map[string]any{"line_id": lineID, "external_reference": ref, "amount": amount, "provider_fee": providerFee, "gross_amount": amount + providerFee, "currency": strings.TrimSpace(currency), "transaction_date": date, "match_status": match, "collection_id": collectionID, "payment_request_id": nullableNull(requestID), "payout_id": nullableNull(payoutID), "duplicate_of": nullableInt64(duplicateOf), "suggestion_reason": suggestion, "suggested_collection_id": nullableNull(suggestedID), "suggestion_score": nullableInt64(suggestedScore)})
 		}
 		if rows.Err() != nil {
 			writeJSON(w, 500, problem{Error: "reconciliation lines could not be read"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"id": parts[2], "status": status, "source_name": source, "line_count": count, "created_at": created, "lines": lines})
+		writeJSON(w, 200, map[string]any{"id": parts[2], "status": status, "source_name": source, "provider": provider, "line_count": count, "created_at": created, "lines": lines})
 		return
 	}
 	notFound(w, r)
@@ -94,7 +104,7 @@ func (a *App) listReconciliationImports(w http.ResponseWriter, r *http.Request, 
 	}
 	at, afterID := cursorArgs(cursor)
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT i.id,i.status,i.source_name,i.line_count,i.created_at,
+		SELECT i.id,i.status,i.source_name,i.line_count,i.created_at,i.provider,
 			COUNT(l.id) FILTER (WHERE l.match_status='matched')::integer,
 			COUNT(l.id) FILTER (WHERE l.match_status NOT IN ('matched','ignored'))::integer
 		FROM reconciliation_imports i
@@ -112,15 +122,15 @@ func (a *App) listReconciliationImports(w http.ResponseWriter, r *http.Request, 
 	defer rows.Close()
 	type importRow struct {
 		pageCursor
-		status, source string
-		lineCount      int
-		matched        int
-		exceptions     int
+		status, source, provider string
+		lineCount                int
+		matched                  int
+		exceptions               int
 	}
 	imports := make([]importRow, 0, limit+1)
 	for rows.Next() {
 		var item importRow
-		if err = rows.Scan(&item.ID, &item.status, &item.source, &item.lineCount, &item.CreatedAt, &item.matched, &item.exceptions); err != nil {
+		if err = rows.Scan(&item.ID, &item.status, &item.source, &item.lineCount, &item.CreatedAt, &item.provider, &item.matched, &item.exceptions); err != nil {
 			writeJSON(w, 500, problem{Error: "reconciliation imports unavailable"})
 			return
 		}
@@ -137,7 +147,7 @@ func (a *App) listReconciliationImports(w http.ResponseWriter, r *http.Request, 
 	data := make([]map[string]any, 0, len(imports))
 	for _, item := range imports {
 		data = append(data, map[string]any{
-			"id": item.ID, "status": item.status, "source_name": item.source,
+			"id": item.ID, "status": item.status, "source_name": item.source, "provider": item.provider,
 			"line_count": item.lineCount, "matched_count": item.matched,
 			"exception_count": item.exceptions, "created_at": item.CreatedAt,
 		})
@@ -258,4 +268,47 @@ func nullableInt64(v sql.NullInt64) any {
 		return nil
 	}
 	return v.Int64
+}
+
+// reconciliationSources summarizes every statement source (the bank and each
+// payment provider) side by side: what was imported, what matched, and what
+// is still open, per currency.
+func (a *App) reconciliationSources(w http.ResponseWriter, r *http.Request, org string) {
+	rows, err := a.db.QueryContext(r.Context(), `SELECT i.provider,l.currency,
+		COUNT(DISTINCT i.id),COUNT(l.id),
+		COUNT(l.id) FILTER (WHERE l.match_status='matched'),
+		COUNT(l.id) FILTER (WHERE l.match_status NOT IN ('matched','ignored')),
+		COALESCE(SUM(l.amount_minor) FILTER (WHERE l.match_status='matched'),0),
+		COALESCE(SUM(l.amount_minor) FILTER (WHERE l.match_status NOT IN ('matched','ignored')),0),
+		COALESCE(SUM(l.provider_fee_minor),0),
+		COUNT(l.id) FILTER (WHERE l.match_status NOT IN ('matched','ignored') AND l.suggested_collection_id IS NOT NULL),
+		MAX(i.created_at)
+		FROM reconciliation_imports i JOIN reconciliation_lines l ON l.import_id=i.id AND l.organization_id=i.organization_id
+		WHERE i.organization_id=$1
+		GROUP BY i.provider,l.currency ORDER BY i.provider,l.currency`, org)
+	if err != nil {
+		writeJSON(w, 500, problem{Error: "reconciliation sources unavailable"})
+		return
+	}
+	defer rows.Close()
+	data := []map[string]any{}
+	for rows.Next() {
+		var provider, currency string
+		var imports, lines, matched, open, matchedAmount, openAmount, fees, suggested int64
+		var last time.Time
+		if err = rows.Scan(&provider, &currency, &imports, &lines, &matched, &open, &matchedAmount, &openAmount, &fees, &suggested, &last); err != nil {
+			writeJSON(w, 500, problem{Error: "reconciliation sources unavailable"})
+			return
+		}
+		data = append(data, map[string]any{
+			"provider": provider, "currency": strings.TrimSpace(currency), "import_count": imports, "line_count": lines,
+			"matched_count": matched, "open_count": open, "matched_amount": matchedAmount, "open_amount": openAmount,
+			"provider_fees": fees, "suggested_count": suggested, "last_import_at": last,
+		})
+	}
+	if err = rows.Err(); err != nil {
+		writeJSON(w, 500, problem{Error: "reconciliation sources unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"data": data})
 }

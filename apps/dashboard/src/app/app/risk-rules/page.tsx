@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FlaskConical, Plus, ShieldAlert } from "lucide-react";
+import { FlaskConical, LayoutTemplate, Plus, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { EmptyState } from "@/components/ui-blocks/empty-state";
@@ -14,7 +14,7 @@ import { useSession } from "@/components/providers/session-provider";
 import { api, errorMessage } from "@/lib/api";
 import { formatMinor, majorToMinor, minorToMajorInput } from "@/lib/format";
 import { canReviewFraud } from "@/lib/roles";
-import type { RiskAction, RiskEvaluation, RiskRule, RiskSubjectKind } from "@/lib/types";
+import type { RiskAction, RiskEvaluation, RiskRule, RiskRuleTemplate, RiskSubjectKind } from "@/lib/types";
 
 const KINDS: RiskSubjectKind[] = ["collection", "transfer", "payout"];
 const ACTION_TONE: Record<RiskAction, "success" | "warning" | "danger"> = { allow: "success", review: "warning", block: "danger" };
@@ -68,6 +68,8 @@ export default function RiskRulesPage() {
   const [test, setTest] = useState({ kind: "transfer" as RiskSubjectKind, amount: "", currency: "USD" });
   const [result, setResult] = useState<RiskEvaluation | null>(null);
   const [testing, setTesting] = useState(false);
+  const [templates, setTemplates] = useState<RiskRuleTemplate[]>([]);
+  const [applying, setApplying] = useState("");
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -82,6 +84,33 @@ export default function RiskRulesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!session || !canManage) return;
+    void api<{ data: RiskRuleTemplate[] }>("/risk-rules/templates")
+      .then((result) => setTemplates(result.data))
+      .catch(() => setTemplates([]));
+  }, [session, canManage]);
+
+  const applyTemplate = async (template: RiskRuleTemplate) => {
+    setApplying(template.id);
+    try {
+      const result = await api<{ created: number; already_present: number }>(
+        `/risk-rules/templates/${encodeURIComponent(template.id)}/apply`,
+        { method: "POST", body: JSON.stringify({ currency: template.currency }) }
+      );
+      toast.success(
+        result.created === 0
+          ? `All ${template.name} rules were already here.`
+          : `${result.created} ${template.name} ${result.created === 1 ? "rule" : "rules"} added${result.already_present ? `; ${result.already_present} already here` : ""}.`
+      );
+      await load();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setApplying("");
+    }
+  };
 
   const openEdit = (rule: RiskRule | "new") => {
     if (rule === "new") setForm(emptyForm);
@@ -170,6 +199,44 @@ export default function RiskRulesPage() {
           ) : undefined
         }
       />
+      {canManage && templates.length > 0 && (
+        <Panel className="mb-4">
+          <PanelHeader
+            title="Start from a template"
+            description={`Ready-made rules for common kinds of organizations, with limits in ${templates[0].currency}. They ask for review rather than block, and you can edit them afterwards.`}
+          />
+          <ul className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+            {templates.map((template) => (
+              <li key={template.id} className="flex flex-col rounded-lg border border-border bg-paper px-4 py-3">
+                <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-900">
+                  <LayoutTemplate className="size-3.5 text-primary" aria-hidden />
+                  {template.name}
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-500">{template.description}</p>
+                <details className="mt-2 text-[11px]">
+                  <summary className="cursor-pointer text-ink-400 hover:text-ink-700">
+                    {template.rules.length} rules
+                  </summary>
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-ink-600">
+                    {template.rules.map((rule) => (
+                      <li key={rule.name}>{rule.name}</li>
+                    ))}
+                  </ul>
+                </details>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3 h-8 self-start text-[11.5px]"
+                  disabled={applying !== ""}
+                  onClick={() => void applyTemplate(template)}
+                >
+                  {applying === template.id ? "Adding…" : "Add these rules"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
       <div className="grid items-start gap-4 lg:grid-cols-[1.4fr_1fr]">
         <Panel>
           <PanelHeader title="Rules" description={`${rules.filter((r) => r.enabled).length} enabled · evaluated by priority`} />

@@ -118,6 +118,7 @@ func main() {
 	mux.HandleFunc("GET /metrics", metricsHandler)
 	mux.HandleFunc("GET /openapi.yaml", openAPIHandler)
 	mux.HandleFunc("GET /docs", docsHandler)
+	mux.HandleFunc("GET /audit-pack-keys", auditPackKeys)
 	mux.HandleFunc("POST /v1/auth/register", a.register)
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("POST /v1/auth/mfa/verify-login", a.verifyMFALogin)
@@ -413,6 +414,19 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 			a.transactionReport(w, r)
 			return
 		}
+		if r.Method == http.MethodGet && len(seg) == 2 {
+			switch seg[1] {
+			case "activity":
+				a.activityReport(w, r)
+				return
+			case "forecast":
+				a.cashForecast(w, r)
+				return
+			case "audit-pack":
+				a.auditPack(w, r)
+				return
+			}
+		}
 		notFound(w, r)
 	default:
 		notFound(w, r)
@@ -546,23 +560,12 @@ func (a *App) customers(w http.ResponseWriter, r *http.Request, s []string) {
 		writeJSON(w, 201, map[string]any{"id": id, "name": in.Name, "email": in.Email, "phone": in.Phone, "status": "active"})
 		return
 	}
-	if len(s) == 2 && r.Method == "GET" {
-		var out struct {
-			ID      string    `json:"id"`
-			Name    string    `json:"name"`
-			Email   *string   `json:"email"`
-			Phone   *string   `json:"phone"`
-			Status  string    `json:"status"`
-			Created time.Time `json:"created_at"`
-		}
-		e := a.db.QueryRowContext(r.Context(), `SELECT id,name,email,phone,status,created_at FROM customers WHERE id=$1 AND organization_id=$2`, s[1], currentOrgID(r, a.orgID)).Scan(&out.ID, &out.Name, &out.Email, &out.Phone, &out.Status, &out.Created)
-		if e == sql.ErrNoRows {
-			notFound(w, r)
-		} else if e != nil {
-			writeJSON(w, 500, problem{Error: "database error"})
-		} else {
-			writeJSON(w, 200, out)
-		}
+	if len(s) == 2 && r.Method == http.MethodGet {
+		a.customerDetail(w, r, currentOrgID(r, a.orgID), s[1])
+		return
+	}
+	if len(s) == 2 && (r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		a.changeCustomer(w, r, currentOrgID(r, a.orgID), s[1])
 		return
 	}
 	notFound(w, r)
@@ -577,21 +580,31 @@ func (a *App) accounts(w http.ResponseWriter, r *http.Request, s []string) {
 			CustomerID string `json:"customer_id"`
 			Currency   string `json:"currency"`
 			Type       string `json:"account_type"`
+			Label      string `json:"label"`
 		}
 		if decode(r, &in) != nil || len(in.Currency) != 3 {
 			bad(w, r, "currency must be a three-letter code")
+			return
+		}
+		in.Label = strings.TrimSpace(in.Label)
+		if len(in.Label) > 80 {
+			bad(w, r, "label must be at most 80 characters")
+			return
+		}
+		if archivedCustomer(r.Context(), a.db, currentOrgID(r, a.orgID), in.CustomerID) {
+			writeJSON(w, 409, problem{Error: "this customer is archived; restore them before adding an account", RequestID: requestID(r)})
 			return
 		}
 		id := "acc_" + newID()
 		if in.Type == "" {
 			in.Type = "wallet"
 		}
-		_, e := a.db.ExecContext(r.Context(), `INSERT INTO accounts(id,organization_id,customer_id,currency,account_type) VALUES($1,$2,NULLIF($3,''),upper($4),$5)`, id, currentOrgID(r, a.orgID), in.CustomerID, in.Currency, in.Type)
+		_, e := a.db.ExecContext(r.Context(), `INSERT INTO accounts(id,organization_id,customer_id,currency,account_type,label) VALUES($1,$2,NULLIF($3,''),upper($4),$5,NULLIF($6,''))`, id, currentOrgID(r, a.orgID), in.CustomerID, in.Currency, in.Type, in.Label)
 		if e != nil {
 			writeJSON(w, 400, problem{Error: "account could not be created; verify customer belongs to organization"})
 			return
 		}
-		writeJSON(w, 201, map[string]any{"id": id, "customer_id": in.CustomerID, "currency": strings.ToUpper(in.Currency), "account_type": in.Type, "status": "active", "balance_minor": 0})
+		writeJSON(w, 201, map[string]any{"id": id, "customer_id": in.CustomerID, "currency": strings.ToUpper(in.Currency), "account_type": in.Type, "status": "active", "label": nullable(in.Label), "balance_minor": 0})
 		return
 	}
 	if len(s) == 3 && s[2] == "sandbox-credit" && r.Method == "POST" {
@@ -665,6 +678,102 @@ func (a *App) accounts(w http.ResponseWriter, r *http.Request, s []string) {
 		writeJSON(w, 201, result)
 		return
 	}
+	// A ledger account is never hard-deleted: journal lines must keep their
+	// account. PATCH edits presentation/lifecycle, DELETE archives only a
+	// zero-balance account, and both leave the audit trail intact.
+	if len(s) == 2 && (r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		org := currentOrgID(r, a.orgID)
+		var in struct {
+			Label  *string `json:"label"`
+			Status *string `json:"status"`
+		}
+		if r.Method == http.MethodPatch {
+			if decode(r, &in) != nil || (in.Label == nil && in.Status == nil) {
+				bad(w, r, "label or status is required")
+				return
+			}
+		}
+		if in.Label != nil {
+			trimmed := strings.TrimSpace(*in.Label)
+			if len(trimmed) > 80 {
+				bad(w, r, "label must be at most 80 characters")
+				return
+			}
+			*in.Label = trimmed
+		}
+		if in.Status != nil {
+			next := strings.ToLower(strings.TrimSpace(*in.Status))
+			if next != "active" && next != "frozen" && next != "archived" {
+				bad(w, r, "status must be active, frozen or archived")
+				return
+			}
+			*in.Status = next
+		}
+		tx, e := a.db.BeginTx(r.Context(), nil)
+		if e != nil {
+			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		defer tx.Rollback()
+		var status, accountType, label, currency string
+		e = tx.QueryRowContext(r.Context(), `SELECT status,account_type,COALESCE(label,''),currency FROM accounts WHERE id=$1 AND organization_id=$2 FOR UPDATE`, s[1], org).Scan(&status, &accountType, &label, &currency)
+		if e == sql.ErrNoRows {
+			notFound(w, r)
+			return
+		}
+		if e != nil {
+			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		if accountType == "sandbox_clearing" {
+			writeJSON(w, 409, problem{Error: "internal clearing accounts cannot be changed"})
+			return
+		}
+		nextStatus := status
+		if r.Method == http.MethodDelete {
+			nextStatus = "archived"
+		}
+		if in.Status != nil {
+			nextStatus = *in.Status
+		}
+		if status == "archived" && nextStatus != "archived" {
+			writeJSON(w, 409, problem{Error: "archived accounts cannot be reactivated"})
+			return
+		}
+		if nextStatus == "archived" && status != "archived" {
+			var balance int64
+			if e = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(CASE side WHEN 'credit' THEN amount_minor ELSE -amount_minor END),0) FROM journal_lines WHERE organization_id=$1 AND account_id=$2`, org, s[1]).Scan(&balance); e != nil {
+				writeJSON(w, 500, problem{Error: "account balance could not be checked"})
+				return
+			}
+			if balance != 0 {
+				writeJSON(w, 409, problem{Error: "only a zero-balance account can be archived"})
+				return
+			}
+		}
+		nextLabel := label
+		if in.Label != nil {
+			nextLabel = *in.Label
+		}
+		if _, e = tx.ExecContext(r.Context(), `UPDATE accounts SET label=NULLIF($3,''),status=$4 WHERE id=$1 AND organization_id=$2`, s[1], org, nextLabel, nextStatus); e != nil {
+			writeJSON(w, 500, problem{Error: "account could not be updated"})
+			return
+		}
+		action := "account.updated"
+		if nextStatus == "archived" && status != "archived" {
+			action = "account.archived"
+		}
+		if _, e = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,'account',$5,jsonb_build_object('status',$6::text,'label',$7::text))`, "aud_"+newID(), org, nullable(principalFrom(r).userID), action, s[1], nextStatus, nextLabel); e != nil {
+			writeJSON(w, 500, problem{Error: "account audit could not be recorded"})
+			return
+		}
+		if e = tx.Commit(); e != nil {
+			writeJSON(w, 409, problem{Error: "account update conflict"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": s[1], "currency": strings.TrimSpace(currency), "account_type": accountType, "status": nextStatus, "label": nullable(nextLabel)})
+		return
+	}
 	if len(s) >= 2 && r.Method == "GET" {
 		if len(s) == 3 && s[2] == "balance" {
 			var n int64
@@ -676,14 +785,14 @@ func (a *App) accounts(w http.ResponseWriter, r *http.Request, s []string) {
 			writeJSON(w, 200, map[string]any{"account_id": s[1], "balance_minor": n})
 			return
 		}
-		var id, currency, typ, status string
-		e := a.db.QueryRowContext(r.Context(), `SELECT id,currency,account_type,status FROM accounts WHERE id=$1 AND organization_id=$2`, s[1], currentOrgID(r, a.orgID)).Scan(&id, &currency, &typ, &status)
+		var id, currency, typ, status, label string
+		e := a.db.QueryRowContext(r.Context(), `SELECT id,currency,account_type,status,COALESCE(label,'') FROM accounts WHERE id=$1 AND organization_id=$2`, s[1], currentOrgID(r, a.orgID)).Scan(&id, &currency, &typ, &status, &label)
 		if e == sql.ErrNoRows {
 			notFound(w, r)
 		} else if e != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
 		} else {
-			writeJSON(w, 200, map[string]any{"id": id, "currency": currency, "account_type": typ, "status": status})
+			writeJSON(w, 200, map[string]any{"id": id, "currency": currency, "account_type": typ, "status": status, "label": nullable(label)})
 		}
 		return
 	}
@@ -731,6 +840,10 @@ func (a *App) collections(w http.ResponseWriter, r *http.Request, s []string) {
 			return
 		} else if policyErr != nil {
 			writeJSON(w, 500, problem{Error: "transaction policy check failed"})
+			return
+		}
+		if archivedCustomer(r.Context(), tx, currentOrgID(r, a.orgID), in.CustomerID) {
+			writeJSON(w, 409, problem{Error: "this customer is archived; restore them before requesting a payment", RequestID: requestID(r)})
 			return
 		}
 		risk, riskErr := evaluateRisk(r.Context(), tx, currentOrgID(r, a.orgID), riskSubject{Kind: "collection", Amount: in.Amount, Currency: in.Currency, CustomerID: in.CustomerID})

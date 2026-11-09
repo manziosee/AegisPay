@@ -1,6 +1,7 @@
 "use client";
 
 import { GettingStarted } from "@/components/onboarding/getting-started";
+import { MoneyOverview } from "@/components/charts/money-overview";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -546,6 +547,8 @@ export default function OverviewPage() {
           </Panel>
         )}
       </div>
+
+      <MoneyOverview />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">
         <Panel>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -10,7 +10,9 @@ import {
   Link2,
   Loader2,
   Search,
-  SkipForward
+  SkipForward,
+  Sparkles,
+  Upload
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
@@ -23,12 +25,30 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/components/providers/session-provider";
 import { useWorkspaceData } from "@/components/providers/workspace-data-provider";
-import { api, errorMessage } from "@/lib/api";
+import { FormDialog, SelectField } from "@/components/ui-blocks/form-dialog";
+import { api, apiIdempotent, errorMessage } from "@/lib/api";
 import { formatDate, formatMinor } from "@/lib/format";
-import type { Collection, Page, ReconciliationLine } from "@/lib/types";
+import type { Collection, Page, ReconciliationLine, ReconciliationSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type LineAction = { line: ReconciliationLine; resolution: "match" | "ignore" };
+
+const providerLabel: Record<string, string> = {
+  bank: "Bank",
+  stripe: "Stripe",
+  mpesa: "M-Pesa",
+  flutterwave: "Flutterwave"
+};
+
+type ProviderImportResult = {
+  id: string;
+  provider: string;
+  line_count: number;
+  matched_count: number;
+  exception_count: number;
+  suggested_count: number;
+  skipped_rows: number;
+};
 
 export default function ReconciliationPage() {
   const { session } = useSession();
@@ -45,6 +65,22 @@ export default function ReconciliationPage() {
   const [collectionsError, setCollectionsError] = useState("");
   const [saving, setSaving] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  const [sources, setSources] = useState<ReconciliationSource[]>([]);
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [providerForm, setProviderForm] = useState({ provider: "auto", fileName: "", csv: "" });
+
+  const loadSources = useCallback(async () => {
+    try {
+      const result = await api<{ data: ReconciliationSource[] }>("/reconciliation/sources");
+      setSources(result.data);
+    } catch {
+      setSources([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (session) void loadSources();
+  }, [session, loadSources]);
 
   const selectedImport = data.imports.find((item) => item.id === selectedImportId);
   const exceptions = lines.filter(
@@ -101,10 +137,10 @@ export default function ReconciliationPage() {
     };
   }, [action, session]);
 
-  const openAction = (line: ReconciliationLine, resolution: "match" | "ignore") => {
+  const openAction = (line: ReconciliationLine, resolution: "match" | "ignore", suggested = false) => {
     setAction({ line, resolution });
-    setNote("");
-    setCollectionId("");
+    setNote(suggested ? "Accepted the suggested match after checking it is the same payment." : "");
+    setCollectionId(suggested ? line.suggested_collection_id ?? "" : "");
     setCollectionQuery("");
     setDialogError("");
   };
@@ -146,6 +182,7 @@ export default function ReconciliationPage() {
       setAction(null);
       await Promise.all([
         refresh(),
+        loadSources(),
         selectedImportId
           ? api<{ lines: ReconciliationLine[] }>(
               `/reconciliation/imports/${encodeURIComponent(selectedImportId)}`
@@ -165,14 +202,72 @@ export default function ReconciliationPage() {
         title="Reconciliation"
         description="Review imported statement lines, compare them with ledger collections and resolve each exception with evidence."
         actions={
-          <Button asChild variant="outline" className="h-9 border-border bg-card text-[12.5px]">
-            <Link href="/app/money#statement">
-              <FileUp className="size-3.5" />
-              Import a statement
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline" className="h-9 border-border bg-card text-[12.5px]">
+              <Link href="/app/money#statement">
+                <FileUp className="size-3.5" />
+                Import a bank statement
+              </Link>
+            </Button>
+            <Button
+              className="h-9 bg-primary text-[12.5px] font-semibold text-primary-foreground"
+              onClick={() => {
+                setProviderForm({ provider: "auto", fileName: "", csv: "" });
+                setProviderOpen(true);
+              }}
+            >
+              <Upload className="size-3.5" />
+              Import Stripe, M-Pesa or Flutterwave
+            </Button>
+          </>
         }
       />
+
+      {sources.length > 0 && (
+        <section aria-label="Statement sources" className="mb-4">
+          <h2 className="mb-2 text-[12px] font-semibold text-ink-900">Every source, side by side</h2>
+          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {sources.map((source) => {
+              const share = source.line_count ? Math.round((source.matched_count / source.line_count) * 100) : 0;
+              return (
+                <li key={`${source.provider}-${source.currency}`} className="rounded-lg border border-border bg-card px-4 py-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[12.5px] font-semibold text-ink-900">
+                      {providerLabel[source.provider] ?? source.provider} <span className="font-mono text-[11px] font-normal text-ink-400">{source.currency}</span>
+                    </p>
+                    <p className="text-[10.5px] text-ink-400">{formatDate(source.last_import_at)}</p>
+                  </div>
+                  <p className="mt-2 text-[11px] text-ink-500">
+                    {source.matched_count} of {source.line_count} lines matched · {share}%
+                  </p>
+                  <div
+                    className="mt-1.5 h-1.5 rounded-full bg-primary-soft"
+                    role="meter"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={share}
+                    aria-label={`${providerLabel[source.provider] ?? source.provider} ${source.currency} matched`}
+                  >
+                    <div className="h-1.5 rounded-full bg-primary" style={{ width: `${share}%` }} />
+                  </div>
+                  <dl className="mt-2.5 grid grid-cols-2 gap-x-2 text-[10.5px]">
+                    <dt className="text-ink-400">Still open</dt>
+                    <dd className="text-right font-mono text-ink-800">{formatMinor(source.open_amount, source.currency)}</dd>
+                    <dt className="text-ink-400">Provider fees</dt>
+                    <dd className="text-right font-mono text-ink-800">{formatMinor(source.provider_fees, source.currency)}</dd>
+                  </dl>
+                  {source.suggested_count > 0 && (
+                    <p className="mt-2 flex items-center gap-1 text-[10.5px] text-ink-600">
+                      <Sparkles className="size-3 text-primary" aria-hidden />
+                      {source.suggested_count} suggested {source.suggested_count === 1 ? "match" : "matches"} to review
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[0.78fr_1.42fr]">
         <Panel className="min-h-[360px]">
@@ -223,6 +318,11 @@ export default function ReconciliationPage() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12.5px] font-medium text-ink-900">
+                        {item.provider && item.provider !== "bank" && (
+                          <span className="mr-1.5 rounded border border-border bg-paper-muted px-1 py-px text-[10px] font-normal text-ink-500">
+                            {providerLabel[item.provider] ?? item.provider}
+                          </span>
+                        )}
                         {item.source_name}
                       </span>
                       <span className="mt-0.5 block truncate font-mono text-[10px] text-ink-400">
@@ -304,7 +404,15 @@ export default function ReconciliationPage() {
                   </div>
 
                   {line.suggestion_reason && (
-                    <p className="mt-3 rounded-md border-l-2 border-amber bg-amber-soft/60 px-3 py-2 text-[11px] leading-relaxed text-[#7a5210]">
+                    <p
+                      className={cn(
+                        "mt-3 rounded-md border-l-2 px-3 py-2 text-[11px] leading-relaxed",
+                        line.suggested_collection_id
+                          ? "border-primary bg-primary-soft/60 text-ink-800"
+                          : "border-amber bg-amber-soft/60 text-[#7a5210]"
+                      )}
+                    >
+                      {line.suggested_collection_id && <Sparkles className="mr-1 inline size-3 text-primary" aria-hidden />}
                       {line.suggestion_reason}
                     </p>
                   )}
@@ -318,9 +426,22 @@ export default function ReconciliationPage() {
                       <SkipForward className="size-3.5" />
                       Ignore with note
                     </Button>
-                    {line.match_status !== "duplicate" && (
+                    {line.match_status !== "duplicate" && line.suggested_collection_id && (
                       <Button
                         className="h-8 bg-primary text-[11.5px] font-semibold text-primary-foreground"
+                        onClick={() => openAction(line, "match", true)}
+                      >
+                        <Sparkles className="size-3.5" />
+                        Review suggested match
+                      </Button>
+                    )}
+                    {line.match_status !== "duplicate" && (
+                      <Button
+                        variant={line.suggested_collection_id ? "outline" : "default"}
+                        className={cn(
+                          "h-8 text-[11.5px]",
+                          !line.suggested_collection_id && "bg-primary font-semibold text-primary-foreground"
+                        )}
                         onClick={() => openAction(line, "match")}
                       >
                         <Link2 className="size-3.5" />
@@ -334,8 +455,9 @@ export default function ReconciliationPage() {
           )}
           <div className="border-t border-border px-4 py-2.5">
             <p className="text-[10.5px] leading-relaxed text-ink-400">
-              Matching compares reference, currency and gross collection amount. The resolution
-              note is stored with the audit event.
+              Matching compares reference, currency and gross collection amount. When a reference
+              matches nothing, AegisPay suggests a likely request and says why; nothing is matched
+              until you accept it. The resolution note is stored with the audit event.
             </p>
           </div>
         </Panel>
@@ -501,6 +623,66 @@ export default function ReconciliationPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <FormDialog
+        open={providerOpen}
+        onOpenChange={setProviderOpen}
+        title="Import a payment-provider export"
+        description="Upload the CSV you export from the provider's dashboard. Completed incoming payments are matched like bank statement lines; payouts to your bank, charges and failed attempts are skipped."
+        submitLabel="Import and match"
+        onSubmit={async () => {
+          if (!providerForm.csv) throw new Error("Choose a CSV file first.");
+          const result = await apiIdempotent<ProviderImportResult>("/reconciliation/imports/provider", {
+            provider: providerForm.provider,
+            source_name: providerForm.fileName,
+            csv: providerForm.csv
+          });
+          const parts = [
+            `${result.matched_count} matched`,
+            `${result.exception_count} need attention`,
+            result.suggested_count ? `${result.suggested_count} with a suggested match` : "",
+            result.skipped_rows ? `${result.skipped_rows} rows skipped` : ""
+          ].filter(Boolean);
+          toast.success(`${providerLabel[result.provider] ?? result.provider}: ${result.line_count} payments imported. ${parts.join(", ")}.`);
+          await Promise.all([refresh(), loadSources()]);
+          setSelectedImportId(result.id);
+        }}
+      >
+        <SelectField
+          id="provider"
+          label="Provider"
+          value={providerForm.provider}
+          onChange={(value) => setProviderForm({ ...providerForm, provider: value })}
+          options={[
+            { value: "auto", label: "Detect from the file" },
+            { value: "stripe", label: "Stripe (balance history or itemized balance report)" },
+            { value: "mpesa", label: "M-Pesa (business statement)" },
+            { value: "flutterwave", label: "Flutterwave (transactions export)" }
+          ]}
+        />
+        <div className="space-y-2">
+          <Label htmlFor="provider-file">CSV file</Label>
+          <Input
+            id="provider-file"
+            type="file"
+            accept=".csv,text/csv"
+            className="h-9 text-[12px]"
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              if (file.size > 2 * 1024 * 1024) {
+                toast.error("The file is larger than 2 MB. Export a shorter date range.");
+                return;
+              }
+              setProviderForm({ ...providerForm, fileName: file.name, csv: await file.text() });
+            }}
+          />
+          <p className="text-[10.5px] text-ink-400">
+            The payment reference you gave the customer must appear in the export: Stripe description or metadata, the M-Pesa account
+            number, or the Flutterwave tx_ref.
+          </p>
+        </div>
+      </FormDialog>
 
       {data.imports.length > 0 && selectedImportId && (
         <div className="mt-3 flex justify-end">

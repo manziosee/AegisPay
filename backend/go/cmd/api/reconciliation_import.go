@@ -65,6 +65,12 @@ func (a *App) createReconciliationImport(w http.ResponseWriter, r *http.Request,
 // CSV endpoint. The caller must already have decoded the request body, which
 // records the hash used for idempotency.
 func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, source string, lines []statementLine) {
+	a.importStatementLinesFrom(w, r, org, source, lines, importMeta{provider: "bank"})
+}
+
+// importStatementLinesFrom is importStatementLines for a named source: a
+// bank, or a payment provider such as Stripe or M-Pesa.
+func (a *App) importStatementLinesFrom(w http.ResponseWriter, r *http.Request, org, source string, lines []statementLine, meta importMeta) {
 	in := struct {
 		Source string
 		Lines  []statementLine
@@ -273,11 +279,50 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 		outcomes[i] = out
 	}
 
+	// Lines with no reference match may still be a payment whose reference
+	// was mistyped or shortened; suggest the most likely request.
+	suggestions := make([]*matchSuggestion, len(in.Lines))
+	suggested := 0
+	var wantAmounts []int64
+	var wantCurrencies []string
+	earliest := now
+	for i, line := range in.Lines {
+		if outcomes[i].status == "unmatched" {
+			wantAmounts = append(wantAmounts, line.Amount+line.Fee)
+			wantCurrencies = append(wantCurrencies, line.Currency)
+			if dates[i].Before(earliest) {
+				earliest = dates[i]
+			}
+		}
+	}
+	if len(wantAmounts) > 0 {
+		candidates, candidateErr := loadSuggestionCandidates(ctx, tx, org, wantAmounts, wantCurrencies, earliest.AddDate(0, 0, -120))
+		if candidateErr != nil {
+			writeJSON(w, 500, problem{Error: "match suggestions could not be prepared"})
+			return
+		}
+		taken := map[string]bool{}
+		for i, line := range in.Lines {
+			if outcomes[i].status != "unmatched" {
+				continue
+			}
+			if suggestion, ok := suggestCollection(line, line.Amount+line.Fee, dates[i], candidates, taken); ok {
+				taken[suggestion.collectionID] = true
+				suggestions[i] = &suggestion
+				outcomes[i].reason = suggestion.reason
+				suggested++
+			}
+		}
+	}
+
 	if in.Source == "" {
 		in.Source = "sandbox-json"
 	}
+	if meta.provider == "" {
+		meta.provider = "bank"
+	}
 	id := "imp_" + newID()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO reconciliation_imports(id,organization_id,status,source_name,line_count) VALUES($1,$2,'matching',$3,$4)`, id, org, in.Source, len(in.Lines)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO reconciliation_imports(id,organization_id,status,source_name,line_count,provider) VALUES($1,$2,'matching',$3,$4,$5)`, id, org, in.Source, len(in.Lines), meta.provider); err != nil {
 		writeJSON(w, 500, problem{Error: "reconciliation import could not be created"})
 		return
 	}
@@ -289,17 +334,22 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 		chunkDates := make([]time.Time, n)
 		collectionIDs, requestIDs, payoutIDs := make([]*string, n), make([]*string, n), make([]*string, n)
 		duplicates := make([]*int64, n)
+		suggestedIDs, suggestedScores := make([]*string, n), make([]*int64, n)
 		for j := 0; j < n; j++ {
+			if sug := suggestions[start+j]; sug != nil {
+				score := int64(sug.score)
+				suggestedIDs[j], suggestedScores[j] = &sug.collectionID, &score
+			}
 			line, out := in.Lines[start+j], outcomes[start+j]
 			ids[j], refs[j], currencies[j], statuses[j], reasons[j] = out.id, line.Reference, line.Currency, out.status, out.reason
 			amounts[j], fees[j], chunkDates[j] = line.Amount, line.Fee, dates[start+j]
 			collectionIDs[j], requestIDs[j], payoutIDs[j], duplicates[j] = out.collectionID, out.requestID, out.payID, out.duplicateOf
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO reconciliation_lines(id,import_id,organization_id,external_reference,amount_minor,currency,transaction_date,match_status,matched_collection_id,provider_fee_minor,matched_request_id,matched_payout_id,duplicate_of,suggestion_reason)
-			SELECT l.id,$1,$2,l.ref,l.amount,l.currency,l.at,l.status,l.collection_id,l.fee,l.request_id,l.payout_id,l.duplicate_of,l.reason
-			FROM unnest($3::bigint[],$4::text[],$5::bigint[],$6::text[],$7::timestamptz[],$8::text[],$9::text[],$10::bigint[],$11::text[],$12::text[],$13::bigint[],$14::text[])
-			AS l(id,ref,amount,currency,at,status,collection_id,fee,request_id,payout_id,duplicate_of,reason)`,
-			id, org, ids, refs, amounts, currencies, chunkDates, statuses, collectionIDs, fees, requestIDs, payoutIDs, duplicates, reasons); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO reconciliation_lines(id,import_id,organization_id,external_reference,amount_minor,currency,transaction_date,match_status,matched_collection_id,provider_fee_minor,matched_request_id,matched_payout_id,duplicate_of,suggestion_reason,suggested_collection_id,suggestion_score)
+			SELECT l.id,$1,$2,l.ref,l.amount,l.currency,l.at,l.status,l.collection_id,l.fee,l.request_id,l.payout_id,l.duplicate_of,l.reason,l.suggested_id,l.score
+			FROM unnest($3::bigint[],$4::text[],$5::bigint[],$6::text[],$7::timestamptz[],$8::text[],$9::text[],$10::bigint[],$11::text[],$12::text[],$13::bigint[],$14::text[],$15::text[],$16::integer[])
+			AS l(id,ref,amount,currency,at,status,collection_id,fee,request_id,payout_id,duplicate_of,reason,suggested_id,score)`,
+			id, org, ids, refs, amounts, currencies, chunkDates, statuses, collectionIDs, fees, requestIDs, payoutIDs, duplicates, reasons, suggestedIDs, suggestedScores); err != nil {
 			writeJSON(w, 500, problem{Error: "reconciliation lines could not be stored"})
 			return
 		}
@@ -348,7 +398,7 @@ func (a *App) importStatementLines(w http.ResponseWriter, r *http.Request, org, 
 		writeJSON(w, 500, problem{Error: "reconciliation event could not be stored"})
 		return
 	}
-	result := map[string]any{"id": id, "status": importStatus, "source_name": in.Source, "line_count": len(in.Lines), "matched_count": matched, "exception_count": exceptions, "mode": environment, "collections_confirmed": len(confirmedCollections)}
+	result := map[string]any{"id": id, "status": importStatus, "source_name": in.Source, "line_count": len(in.Lines), "matched_count": matched, "exception_count": exceptions, "mode": environment, "collections_confirmed": len(confirmedCollections), "provider": meta.provider, "skipped_rows": meta.skipped, "suggested_count": suggested}
 	if err = storeIdempotency(ctx, tx, org, key, 201, result); err != nil {
 		idempotencyFailure(w, r, err)
 		return

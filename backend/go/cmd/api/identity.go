@@ -257,12 +257,8 @@ func roleAllows(p principal, r *http.Request) bool {
 	case "webhook-endpoints":
 		if r.Method == http.MethodGet {
 			scope = "webhooks.read"
-		} else if len(parts) > 2 && (parts[2] == "disable" || parts[2] == "test" || parts[2] == "rotate-secret") {
-			scope = "webhooks.manage"
-		} else if r.Method == http.MethodPost {
-			scope = "webhooks.manage"
 		} else {
-			scope = "webhooks.read"
+			scope = "webhooks.manage"
 		}
 	case "webhook-deliveries":
 		if r.Method == http.MethodGet {
@@ -705,6 +701,7 @@ func (a *App) members(w http.ResponseWriter, r *http.Request, parts []string) {
 	}
 	notFound(w, r)
 }
+
 // actorIsOwner reports whether the caller holds owner authority. The bootstrap
 // operator key is treated as an owner of the sandbox organization.
 func actorIsOwner(p principal) bool {

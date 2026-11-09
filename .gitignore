@@ -17,3 +17,4 @@ backups/
 # Local Go builds
 backend/go/cmd/api/api
 backend/go/aegispay-api
+backend/go/api

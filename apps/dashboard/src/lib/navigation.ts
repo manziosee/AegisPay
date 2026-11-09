@@ -5,8 +5,10 @@ import {
   Building2,
   Gauge,
   HandCoins,
+  FileCheck2,
   KeyRound,
   Landmark,
+  LineChart,
   UserRound,
   Network,
   Send,
@@ -128,6 +130,15 @@ export const workspaceNav: NavItem[] = [
     visible: (role) => canViewAccounts(role)
   },
   {
+    href: "/app/forecast",
+    label: "Cash forecast",
+    icon: LineChart,
+    group: "Intelligence",
+    description: "Runway and projected balance from the ledger and expected payments",
+    keywords: "runway forecast cash flow projection burn",
+    visible: (role) => canViewAccounts(role)
+  },
+  {
     href: "/app/developers",
     label: "API keys",
     icon: KeyRound,
@@ -152,6 +163,15 @@ export const workspaceNav: NavItem[] = [
     group: "Admin",
     description: "Period close, delegation and audit trail",
     keywords: "period audit delegation simulator",
+    visible: (role) => canViewControls(role)
+  },
+  {
+    href: "/app/audit",
+    label: "Audit proof",
+    icon: FileCheck2,
+    group: "Admin",
+    description: "Audit chain check, daily public timestamps and month-end audit packs",
+    keywords: "audit pack auditor donor proof timestamp opentimestamps signature verify",
     visible: (role) => canViewControls(role)
   },
   {

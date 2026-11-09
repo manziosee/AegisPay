@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, CircleAlert, Gauge, Network, ScanSearch, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { EmptyState } from "@/components/ui-blocks/empty-state";
 import { StatusBadge } from "@/components/data/status-badge";
-import { RiskNetwork, type NetworkLink, type NetworkNode } from "@/components/brand/risk-network";
+import { RelationshipGraph } from "@/components/intelligence/relationship-graph";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,8 +19,7 @@ import {
   formatDate,
   majorToMinor,
   minorHint,
-  minorToMajorInput,
-  formatMinor
+  minorToMajorInput
 } from "@/lib/format";
 import { deriveSignals } from "@/lib/signals";
 import type { FraudAssessment, FraudCase } from "@/lib/types";
@@ -45,6 +44,7 @@ export default function IntelligencePage() {
   const [note, setNote] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState("");
+  const [tab, setTab] = useState("evaluation");
 
   const openCases = data.fraudCases.filter((item) => item.status !== "resolved");
   const selectedCase = openCases.find((item) => item.id === selectedCaseId);
@@ -146,26 +146,6 @@ export default function IntelligencePage() {
     }
   };
 
-  const network = useMemo(() => {
-    const nodes: NetworkNode[] = [
-      { id: "queue", label: "Review queue", x: 500, y: 260, kind: "core", meta: `${openCases.length} open` }
-    ];
-    const links: NetworkLink[] = [];
-    openCases.slice(0, 6).forEach((item, index, list) => {
-      const angle = (Math.PI * 2 * index) / Math.max(list.length, 1) - Math.PI / 2;
-      nodes.push({
-        id: item.id,
-        label: item.transaction_reference,
-        x: 500 + Math.cos(angle) * 300,
-        y: 260 + Math.sin(angle) * 150,
-        kind: "risk",
-        meta: `score ${item.risk_score}`
-      });
-      links.push({ from: "queue", to: item.id, tone: "amber" });
-    });
-    return { nodes, links };
-  }, [openCases]);
-
   return (
     <div>
       <PageHeader
@@ -173,7 +153,7 @@ export default function IntelligencePage() {
         description="Evaluate a transaction reference, read the stored assessment and investigate review cases. Decisions come from your risk rules; extra signals are derived from loaded workspace records."
       />
 
-      <Tabs defaultValue="evaluation">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4 h-9 bg-card p-1">
           <TabsTrigger value="evaluation" className="h-7 px-3 text-[12px]">
             <ScanSearch className="size-3.5" />
@@ -181,7 +161,7 @@ export default function IntelligencePage() {
           </TabsTrigger>
           <TabsTrigger value="network" className="h-7 px-3 text-[12px]">
             <Network className="size-3.5" />
-            Relationship view
+            Relationship graph
           </TabsTrigger>
         </TabsList>
 
@@ -467,28 +447,14 @@ export default function IntelligencePage() {
         </TabsContent>
 
         <TabsContent value="network">
-          <Panel>
-            <PanelHeader
-              title="Relationship view"
-              description="Loaded review cases connected to this workspace's review queue"
-              action={<StatusBadge status="preview" label="Loaded records" tone="info" />}
-            />
-            {openCases.length === 0 ? (
-              <EmptyState
-                icon={Network}
-                title="No relationships to show"
-                text="Relationships appear when review cases are loaded. The view does not invent account or transaction links."
-              />
-            ) : (
-              <div className="p-4">
-                <RiskNetwork nodes={network.nodes} links={network.links} tone="light" compact />
-                <p className="mt-2 text-[10.5px] leading-relaxed text-ink-400">
-                  Lines connect each loaded case to the review queue. No external relationship is
-                  implied.
-                </p>
-              </div>
-            )}
-          </Panel>
+          <RelationshipGraph
+            cases={data.fraudCases}
+            transactions={data.transactions}
+            onInvestigate={(caseId) => {
+              setSelectedCaseId(caseId);
+              setTab("evaluation");
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>

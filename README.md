@@ -121,6 +121,12 @@ The Kubernetes Kustomize base deploys the same services with single replicas and
 - **Tamper-evident audit log.** Each audit row stores the SHA-256 of the previous row's hash plus its own content, and the database refuses updates and deletes. `GET /v1/audit-logs/verify` (and **Verify integrity** in the dashboard) recomputes the chain.
 - **Bank statement files from any bank.** Besides CSV, the API reads the standard formats banks offer for download: CAMT.053 (ISO 20022 XML), MT940 and OFX/QFX. The format is detected automatically.
 - **Team chat notifications.** Approval requests, risk cases and statement results are posted to Slack, Microsoft Teams, Discord or Google Chat through the team's own incoming-webhook link. Links must be on each platform's official host and are stored encrypted.
+- **Customers.** View a customer's accounts, balances and payment history; edit, archive, restore, or delete them. A customer with history is archived instead of deleted, and archived customers get no new accounts or payment requests.
+- **Charts and cash forecast.** The overview charts money in and out per day, payment requests by status and balances per currency. **Cash forecast** projects the balance from the ledger and the payments already expected, and shows the runway: how many days until the balance would fall below zero.
+- **Reconciliation across providers.** Import Stripe, M-Pesa and Flutterwave exports next to bank statements, and see every source side by side. When a line's reference matches nothing, AegisPay suggests the likely payment request and explains why in plain words; nothing is matched until someone accepts it. The suggestions are rule-based, so they cost nothing to run.
+- **Public proof of the audit log.** Each day, every workspace's audit-chain head is timestamped with [OpenTimestamps](https://opentimestamps.org) (free, anchored in Bitcoin). Anyone can check a day's statement and `.ots` proof with `ots verify`, and chain verification fails if the log no longer matches a stamped day. Set `AUDIT_ANCHOR_CALENDARS` to turn it on.
+- **Month-end audit pack.** A ZIP with the month's ledger, approvals, reconciliations, risk decisions and audit log, the timestamp proofs, the chain check, and a manifest of SHA-256 hashes signed with Ed25519. The public keys are at `/audit-pack-keys`, and the pack's README says how to check it.
+- **Risk-rule templates.** Ready-made rule sets for NGOs and grant programmes, retail shops, freelancers, and cooperatives, priced in the workspace's currency.
 - **Email.** Invitations with a one-click accept link, password reset (one-time, one-hour links that sign out every session), and approval requests to the people who can approve, all sent through Brevo. Without `BREVO_API_KEY`, emails are logged instead of sent.
 - Personal and business workspaces can use bank-file receive/send records without connecting a payment provider. AegisPay is the workflow and evidence layer; each user's bank remains responsible for moving funds.
 
@@ -308,6 +314,7 @@ Settings read by the Go API. Secrets go in `.env` locally, `fly secrets` on Fly.
 | `IDEMPOTENCY_RETENTION_HOURS` / `SESSION_RETENTION_DAYS` / `MAINTENANCE_INTERVAL_MINUTES` | Optional | Retention and cleanup cadence (24 h, 30 days, 60 min). |
 | `SWAGGER_ORIGIN` | Optional | Origin allowed by CORS for a separately hosted Swagger UI. |
 | `DASHBOARD_URL` | For email | Public dashboard address used in email links (for example `https://aegispays.netlify.app`). |
+| `AUDIT_ANCHOR_CALENDARS` | Optional | Comma-separated OpenTimestamps calendar URLs for the daily audit-log proof (set in `fly.toml`). Empty turns it off. |
 | `SUPPORT_EMAIL` | Optional | Where feedback from the dashboard is sent (default `EMAIL_FROM`). |
 | `BREVO_API_KEY` | For email | Brevo API key with transactional email permission (free plan: 300 emails a day). |
 | `EMAIL_FROM` / `EMAIL_FROM_NAME` | For email | Verified Brevo sender address and display name. |

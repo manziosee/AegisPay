@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -198,8 +199,51 @@ func (a *App) fraud(w http.ResponseWriter, r *http.Request, parts []string) {
 		writeJSON(w, 200, map[string]any{"id": parts[2], "status": "resolved", "outcome": in.Outcome})
 		return
 	}
+	if len(parts) == 3 && parts[1] == "cases" && r.Method == http.MethodGet {
+		var id, status, priority, reference, level, model, currency string
+		var score int
+		var amount int64
+		var created time.Time
+		err := a.db.QueryRowContext(r.Context(), `SELECT c.id,c.status,c.priority,c.created_at,a.transaction_reference,a.risk_score,a.risk_level,a.model_version,
+			COALESCE(col.currency,tr.currency,''),COALESCE(col.amount_minor,tr.amount_minor,0)
+			FROM fraud_cases c
+			JOIN risk_assessments a ON a.id=c.assessment_id AND a.organization_id=c.organization_id
+			LEFT JOIN LATERAL (SELECT currency,amount_minor FROM collections WHERE organization_id=c.organization_id AND reference=a.transaction_reference ORDER BY created_at DESC LIMIT 1) col ON true
+			LEFT JOIN LATERAL (SELECT currency,amount_minor FROM transfers WHERE organization_id=c.organization_id AND reference=a.transaction_reference ORDER BY created_at DESC LIMIT 1) tr ON true
+			WHERE c.id=$1 AND c.organization_id=$2`, parts[2], org).Scan(&id, &status, &priority, &created, &reference, &score, &level, &model, &currency, &amount)
+		if err == sql.ErrNoRows {
+			notFound(w, r)
+			return
+		}
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		notesRows, err := a.db.QueryContext(r.Context(), `SELECT n.id,COALESCE(n.note,''),n.created_at,COALESCE(n.author_id,''),COALESCE(u.full_name,'') FROM fraud_case_notes n LEFT JOIN users u ON u.id=n.author_id WHERE n.case_id=$1 AND n.organization_id=$2 ORDER BY n.created_at`, parts[2], org)
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "case notes could not be loaded"})
+			return
+		}
+		defer notesRows.Close()
+		notes := []map[string]any{}
+		for notesRows.Next() {
+			var noteID, note, authorID, authorName string
+			var noteAt time.Time
+			if notesRows.Scan(&noteID, &note, &noteAt, &authorID, &authorName) == nil {
+				notes = append(notes, map[string]any{"id": noteID, "note": note, "created_at": noteAt, "author_id": nullable(authorID), "author_name": authorName})
+			}
+		}
+		writeJSON(w, 200, map[string]any{"id": id, "status": status, "priority": priority, "created_at": created, "transaction_reference": reference, "risk_score": score, "risk_level": level, "model_version": model, "currency": strings.TrimSpace(currency), "amount_minor": amount, "notes": notes})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "cases" && r.Method == http.MethodGet {
-		rows, err := a.db.QueryContext(r.Context(), `SELECT c.id,c.status,c.priority,c.created_at,a.transaction_reference,a.risk_score,a.risk_level FROM fraud_cases c JOIN risk_assessments a ON a.id=c.assessment_id AND a.organization_id=c.organization_id WHERE c.organization_id=$1 ORDER BY c.created_at DESC LIMIT 100`, org)
+		rows, err := a.db.QueryContext(r.Context(), `SELECT c.id,c.status,c.priority,c.created_at,a.transaction_reference,a.risk_score,a.risk_level,a.model_version,
+			COALESCE(col.currency,tr.currency,''),COALESCE(col.amount_minor,tr.amount_minor,0)
+			FROM fraud_cases c
+			JOIN risk_assessments a ON a.id=c.assessment_id AND a.organization_id=c.organization_id
+			LEFT JOIN LATERAL (SELECT currency,amount_minor FROM collections WHERE organization_id=c.organization_id AND reference=a.transaction_reference ORDER BY created_at DESC LIMIT 1) col ON true
+			LEFT JOIN LATERAL (SELECT currency,amount_minor FROM transfers WHERE organization_id=c.organization_id AND reference=a.transaction_reference ORDER BY created_at DESC LIMIT 1) tr ON true
+			WHERE c.organization_id=$1 ORDER BY c.created_at DESC LIMIT 100`, org)
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
 			return
@@ -207,11 +251,12 @@ func (a *App) fraud(w http.ResponseWriter, r *http.Request, parts []string) {
 		defer rows.Close()
 		data := []map[string]any{}
 		for rows.Next() {
-			var id, status, priority, reference, level string
+			var id, status, priority, reference, level, model, currency string
 			var score int
+			var amount int64
 			var created time.Time
-			if rows.Scan(&id, &status, &priority, &created, &reference, &score, &level) == nil {
-				data = append(data, map[string]any{"id": id, "status": status, "priority": priority, "created_at": created, "transaction_reference": reference, "risk_score": score, "risk_level": level})
+			if rows.Scan(&id, &status, &priority, &created, &reference, &score, &level, &model, &currency, &amount) == nil {
+				data = append(data, map[string]any{"id": id, "status": status, "priority": priority, "created_at": created, "transaction_reference": reference, "risk_score": score, "risk_level": level, "model_version": model, "currency": strings.TrimSpace(currency), "amount_minor": amount})
 			}
 		}
 		writeJSON(w, 200, map[string]any{"data": data})

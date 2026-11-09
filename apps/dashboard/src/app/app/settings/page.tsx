@@ -1,13 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Building2, Clock3, Fingerprint, LockKeyhole, Plus, Users } from "lucide-react";
+import { Building2, Clock3, Fingerprint, LockKeyhole, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, Panel, PanelHeader } from "@/components/ui-blocks/panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
 import { SessionsPanel } from "@/components/settings/sessions-panel";
 import { DataPanel } from "@/components/settings/data-panel";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +32,7 @@ import {
   minorToMajorInput,
   roleLabel
 } from "@/lib/format";
-import { canFinance } from "@/lib/roles";
+import { isAdmin } from "@/lib/roles";
 import type { TransactionPolicy } from "@/lib/types";
 
 type PolicyForm = {
@@ -46,9 +56,12 @@ const emptyForm: PolicyForm = {
 export default function SettingsPage() {
   const { session, role } = useSession();
   const { data, refresh } = useWorkspaceData();
-  const canEdit = canFinance(role ?? "");
+  // Transaction policies are owner/admin controls; finance operators can read
+  // them but cannot change or delete guardrails.
+  const canEdit = isAdmin(role ?? "");
   const organization = data.organization;
   const [editing, setEditing] = useState<TransactionPolicy | "new" | null>(null);
+  const [deleting, setDeleting] = useState<TransactionPolicy | null>(null);
   const editingPolicy = editing && editing !== "new" ? editing : null;
   const [readOnlyPolicies, setFallbackPolicies] = useState<TransactionPolicy[]>([]);
   const policies = data.policies.length > 0 ? data.policies : readOnlyPolicies;
@@ -97,6 +110,23 @@ export default function SettingsPage() {
       ),
     [policies, form.currency]
   );
+
+  const deletePolicy = async (policy: TransactionPolicy) => {
+    if (!session || !canEdit) return;
+    try {
+      await api(`/transaction-policies/${encodeURIComponent(policy.currency)}`, {
+        method: "DELETE"
+      });
+      toast.success(`${policy.currency} policy removed.`);
+      setDeleting(null);
+      setFallbackPolicies((current) =>
+        current.filter((item) => item.currency !== policy.currency)
+      );
+      await refresh();
+    } catch (deleteError) {
+      toast.error(errorMessage(deleteError));
+    }
+  };
 
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -278,14 +308,25 @@ export default function SettingsPage() {
                       <td className="px-3 py-3 font-mono text-[11px]">{policy.required_approvals}</td>
                       <td className="px-5 py-3 text-right">
                         {canEdit && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-[10.5px]"
-                            onClick={() => setEditing(policy)}
-                          >
-                            Edit
-                          </Button>
+                          <span className="inline-flex items-center gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[10.5px]"
+                              onClick={() => setEditing(policy)}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Delete ${policy.currency} policy`}
+                              className="size-7 text-coral hover:bg-coral-soft"
+                              onClick={() => setDeleting(policy)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -308,6 +349,31 @@ export default function SettingsPage() {
         Limits govern operations recorded in AegisPay. They do not authorize or execute payments
         at your bank.
       </p>
+
+      <AlertDialog
+        open={Boolean(deleting)}
+        onOpenChange={(open) => !open && setDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this currency policy?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting
+                ? `Removing the ${deleting.currency} policy deletes its single-transaction, daily and approval limits. New payments in ${deleting.currency} will fall back to environment defaults. The change is written to the audit log.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleting && void deletePolicy(deleting)}
+            >
+              Delete policy
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SecurityPanel />
       <SessionsPanel />

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -162,7 +163,7 @@ func (a *App) webhookEndpoints(w http.ResponseWriter, r *http.Request, parts []s
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		rows, err := a.db.QueryContext(r.Context(), `SELECT id,url,events,status,created_at FROM webhook_endpoints WHERE organization_id=$1 ORDER BY created_at DESC`, org)
+		rows, err := a.db.QueryContext(r.Context(), `SELECT id,url,events,status,created_at FROM webhook_endpoints WHERE organization_id=$1 AND status<>'deleted' ORDER BY created_at DESC`, org)
 		if err != nil {
 			writeJSON(w, 500, problem{Error: "database error"})
 			return
@@ -180,6 +181,75 @@ func (a *App) webhookEndpoints(w http.ResponseWriter, r *http.Request, parts []s
 			}
 		}
 		writeJSON(w, 200, map[string]any{"data": data})
+		return
+	}
+	if len(parts) == 2 && (r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		var in struct {
+			URL    *string   `json:"url"`
+			Events *[]string `json:"events"`
+			Status *string   `json:"status"`
+		}
+		if r.Method == http.MethodPatch {
+			if decode(r, &in) != nil || (in.URL == nil && in.Events == nil && in.Status == nil) {
+				bad(w, r, "url, events or status is required")
+				return
+			}
+		}
+		if in.URL != nil {
+			trimmed := strings.TrimSpace(*in.URL)
+			if err := validateWebhookURL(trimmed); err != nil {
+				bad(w, r, err.Error())
+				return
+			}
+			*in.URL = trimmed
+		}
+		var eventsJSON any
+		if in.Events != nil {
+			if len(*in.Events) == 0 || len(*in.Events) > 20 {
+				bad(w, r, "one or more event types are required")
+				return
+			}
+			for _, event := range *in.Events {
+				if !webhookEvents[event] {
+					bad(w, r, "unsupported webhook event: "+event)
+					return
+				}
+			}
+			eventsJSON = string(mustJSON(*in.Events))
+		}
+		if in.Status != nil {
+			next := strings.ToLower(strings.TrimSpace(*in.Status))
+			if next != "active" && next != "disabled" {
+				bad(w, r, "status must be active or disabled")
+				return
+			}
+			*in.Status = next
+		}
+		var res sql.Result
+		var err error
+		if r.Method == http.MethodDelete {
+			res, err = a.db.ExecContext(r.Context(), `UPDATE webhook_endpoints SET status='deleted' WHERE id=$1 AND organization_id=$2 AND status<>'deleted'`, parts[1], org)
+		} else {
+			res, err = a.db.ExecContext(r.Context(), `UPDATE webhook_endpoints SET url=COALESCE($3,url),events=COALESCE($4::jsonb,events),status=COALESCE($5,status) WHERE id=$1 AND organization_id=$2 AND status<>'deleted'`, parts[1], org, in.URL, eventsJSON, in.Status)
+		}
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "webhook endpoint could not be updated"})
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			notFound(w, r)
+			return
+		}
+		action := "webhook_endpoint.updated"
+		if r.Method == http.MethodDelete {
+			action = "webhook_endpoint.deleted"
+		}
+		a.audit(r, org, action, "webhook_endpoint", parts[1], map[string]any{"status": in.Status})
+		if r.Method == http.MethodDelete {
+			writeJSON(w, 200, map[string]string{"id": parts[1], "status": "deleted"})
+		} else {
+			writeJSON(w, 200, map[string]any{"id": parts[1], "status": in.Status})
+		}
 		return
 	}
 	if len(parts) == 3 && parts[2] == "disable" && r.Method == http.MethodPost {

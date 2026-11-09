@@ -282,6 +282,8 @@ func (a *App) riskRules(w http.ResponseWriter, r *http.Request, parts []string) 
 	org := currentOrgID(r, a.orgID)
 	p := principalFrom(r)
 	switch {
+	case len(parts) >= 2 && parts[1] == "templates":
+		a.riskRuleTemplatesHandler(w, r, parts)
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		rows, err := a.db.QueryContext(r.Context(), `SELECT `+riskRuleColumns+` FROM risk_rules WHERE organization_id=$1 ORDER BY priority,created_at`, org)
 		if err != nil {

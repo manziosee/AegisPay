@@ -28,9 +28,10 @@ const warning = [
   "exported_for_manual_entry",
   "submitted_to_bank",
   "review",
-  "confirmed"
+  "confirmed",
+  "frozen"
 ];
-const danger = ["failed", "rejected", "ignored", "blocked", "block", "exception", "duplicate"];
+const danger = ["failed", "rejected", "ignored", "blocked", "block", "exception", "duplicate", "suspended"];
 const info = ["prepared", "unmatched", "not_submitted"];
 
 export function toneForStatus(status: string): Tone {

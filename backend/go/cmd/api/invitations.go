@@ -84,6 +84,43 @@ func (a *App) invitations(w http.ResponseWriter, r *http.Request, parts []string
 		writeJSON(w, 201, map[string]any{"id": id, "email": in.Email, "role": in.Role, "expires_at": expires, "invite_token": token, "delivery": "manual", "warning": "deliver this token to the invitee over a trusted channel; it will not be shown again"})
 		return
 	}
+	if len(parts) == 2 && r.Method == http.MethodDelete {
+		tx, err := a.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "database error"})
+			return
+		}
+		defer tx.Rollback()
+		var email, role string
+		var accepted sql.NullTime
+		err = tx.QueryRowContext(r.Context(), `SELECT email,role,accepted_at FROM organization_invitations WHERE id=$1 AND organization_id=$2 FOR UPDATE`, parts[1], org).Scan(&email, &role, &accepted)
+		if err == sql.ErrNoRows {
+			notFound(w, r)
+			return
+		}
+		if err != nil {
+			writeJSON(w, 500, problem{Error: "invitation could not be loaded"})
+			return
+		}
+		if accepted.Valid {
+			writeJSON(w, 409, problem{Error: "accepted invitations cannot be revoked"})
+			return
+		}
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM organization_invitations WHERE id=$1 AND organization_id=$2 AND accepted_at IS NULL`, parts[1], org); err != nil {
+			writeJSON(w, 500, problem{Error: "invitation could not be revoked"})
+			return
+		}
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(id,organization_id,actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'invitation.revoked','invitation',$4,jsonb_build_object('email',$5::text,'role',$6::text))`, "aud_"+newID(), org, nullable(principalFrom(r).userID), parts[1], email, role); err != nil {
+			writeJSON(w, 500, problem{Error: "invitation audit could not be recorded"})
+			return
+		}
+		if err = tx.Commit(); err != nil {
+			writeJSON(w, 409, problem{Error: "invitation revocation conflict"})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"id": parts[1], "status": "revoked"})
+		return
+	}
 	if len(parts) == 3 && parts[2] == "accept" && r.Method == http.MethodPost {
 		p := principalFrom(r)
 		if p.userID == "" || p.sessionID == "" {
