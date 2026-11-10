@@ -377,6 +377,8 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		a.fraud(w, r, seg)
 	case "reconciliation":
 		a.reconciliation(w, r, seg)
+	case "finance-plans":
+		a.financePlans(w, r, seg[1:])
 	case "webhook-endpoints":
 		if len(seg) == 3 && seg[2] == "test" && r.Method == http.MethodPost {
 			a.testWebhookEndpoint(w, r, seg[1])

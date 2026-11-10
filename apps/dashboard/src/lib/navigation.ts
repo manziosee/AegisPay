@@ -9,6 +9,7 @@ import {
   KeyRound,
   Landmark,
   LineChart,
+  WalletCards,
   UserRound,
   Network,
   Send,
@@ -71,6 +72,15 @@ export const workspaceNav: NavItem[] = [
     group: "Operate",
     description: "Create, confirm and refund collections; move funds between accounts",
     keywords: "collection payment confirm refund transfer send",
+    visible: (role) => canFinance(role)
+  },
+  {
+    href: "/app/finance",
+    label: "Funds and budgets",
+    icon: WalletCards,
+    group: "Operate",
+    description: "Restricted funds, commitments, staff advances and finance evidence",
+    keywords: "grants restricted funds budget commitments advances receipt evidence donor",
     visible: (role) => canFinance(role)
   },
   {

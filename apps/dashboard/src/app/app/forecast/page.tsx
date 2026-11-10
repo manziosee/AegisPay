@@ -12,7 +12,7 @@ import type { CashForecast } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const HORIZONS = [30, 90, 180] as const;
-const kindLabel = { payment_request: "Payment request", collection: "Collection", payout: "Payout" };
+const kindLabel = { payment_request: "Payment request", collection: "Collection", payout: "Payout", commitment: "Budget commitment" };
 
 export default function ForecastPage() {
   const [horizon, setHorizon] = useState<(typeof HORIZONS)[number]>(90);
@@ -161,7 +161,7 @@ export default function ForecastPage() {
                           <td className="px-4 py-2.5 text-ink-600">{kindLabel[item.kind]}</td>
                           <td className="px-4 py-2.5 font-mono text-ink-900">{item.reference}</td>
                           <td className="whitespace-nowrap px-5 py-2.5 text-right font-mono text-ink-950">
-                            {item.kind === "payout" ? "−" : "+"}
+                            {item.kind === "payout" || item.kind === "commitment" ? "−" : "+"}
                             {formatMinor(item.amount_minor, cur)}
                           </td>
                         </tr>

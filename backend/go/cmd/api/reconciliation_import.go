@@ -375,6 +375,16 @@ func (a *App) importStatementLinesFrom(w http.ResponseWriter, r *http.Request, o
 			writeJSON(w, 500, problem{Error: "payout settlement status could not be updated"})
 			return
 		}
+		if _, err = tx.ExecContext(ctx, `UPDATE finance_commitments SET status='settled',updated_at=now()
+			WHERE organization_id=$1 AND payout_id=ANY($2) AND commitment_type<>'staff_advance' AND status='linked'`, org, confirmedPayouts); err != nil {
+			writeJSON(w, 500, problem{Error: "commitment settlement status could not be updated"})
+			return
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE staff_advances SET status='outstanding',updated_at=now()
+			WHERE organization_id=$1 AND payout_id=ANY($2) AND status='awaiting_payout'`, org, confirmedPayouts); err != nil {
+			writeJSON(w, 500, problem{Error: "staff advance status could not be updated"})
+			return
+		}
 	}
 	if len(auditActions) > 0 {
 		p := principalFrom(r)

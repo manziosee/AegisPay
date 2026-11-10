@@ -386,9 +386,112 @@ export type CashForecast = {
   runway_days: number | null;
   history: { date: string; balance: number }[];
   projection: { date: string; known: number; typical: number }[];
-  expected: { kind: "payment_request" | "collection" | "payout"; id: string; reference: string; amount_minor: number; expected_on: string; overdue: boolean }[];
+  expected: { kind: "payment_request" | "collection" | "payout" | "commitment"; id: string; reference: string; amount_minor: number; expected_on: string; overdue: boolean }[];
   balances: { currency: string; balance_minor: number }[];
   note: string;
+};
+
+export type FinanceFund = {
+  id: string;
+  name: string;
+  fund_type: "general" | "restricted" | "grant" | "project" | "household";
+  donor_name: string;
+  project_code: string;
+  restriction_note: string;
+  currency: string;
+  allocated_minor: number;
+  committed_minor: number;
+  spent_minor: number;
+  available_minor: number;
+  period_start: string | null;
+  period_end: string | null;
+  status: "active" | "closed";
+  created_at: string;
+};
+
+export type FinanceCommitmentInput = {
+  fund_id: string;
+  commitment_type: "supplier" | "operating";
+  title: string;
+  beneficiary_name: string;
+  amount_minor: number;
+  currency: string;
+  due_date: string;
+};
+
+export type FinanceCommitment = FinanceCommitmentInput & {
+  id: string;
+  fund_name: string;
+  status: "planned" | "linked" | "settled" | "cancelled";
+  payout_id: string | null;
+  payout_status?: string;
+  created_at: string;
+};
+
+export type StaffAdvance = {
+  id: string;
+  commitment_id: string;
+  payout_id: string;
+  staff_name: string;
+  purpose: string;
+  amount_minor: number;
+  currency: string;
+  status: "awaiting_payout" | "outstanding" | "settled";
+  fund_id: string;
+  fund_name: string;
+  payout_reference: string;
+  payout_status: string;
+  settled_minor: number;
+  used_minor: number;
+  remaining_minor: number;
+  created_at: string;
+};
+
+export type AdvanceSettlement = {
+  id: string;
+  advance_id: string;
+  used_minor: number;
+  returned_minor: number;
+  note: string;
+  status: "pending_review" | "approved" | "rejected";
+  submitted_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+};
+
+export type FinanceQueueItem = {
+  id: string;
+  advance_id?: string;
+  type: "payout_approval" | "advance_settlement" | "reconciliation_exceptions";
+  reference: string;
+  amount_minor: number;
+  currency: string;
+  status: string;
+  created_at?: string;
+  reason: string;
+  priority: number;
+};
+
+export type FinanceEvidenceUpload = {
+  id: string;
+  resource_type: "commitment" | "advance" | "settlement";
+  resource_id: string;
+  file_name: string;
+  content_type: string;
+  file_size: number;
+  sha256: string;
+};
+
+export type FinanceEvidence = {
+  id: string;
+  file_name: string;
+  content_type: string;
+  file_size: number;
+  sha256: string;
+  note: string;
+  uploaded_by: string | null;
+  created_at: string;
 };
 
 export type AuditAnchor = {

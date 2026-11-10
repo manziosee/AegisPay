@@ -246,7 +246,12 @@ export async function signInWithMockWorkspace(page: Page, options: MockOptions =
   });
 
   await page.goto("/");
-  await page.getByRole("link", { name: "Log in" }).click();
+  const loginLink = page.getByRole("link", { name: /^(Log in|Sign in)$/ });
+  if (await loginLink.count()) {
+    await loginLink.first().click();
+  } else {
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  }
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
   // Prove the client bundle is attached before typing into controlled inputs.
   await ensureHydratedPasswordToggle(page, "#password");

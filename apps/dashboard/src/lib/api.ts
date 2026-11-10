@@ -64,7 +64,11 @@ async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
   const { anonymous, ...fetchInit } = init;
   const headers = new Headers(fetchInit.headers);
   headers.set("Accept", "application/json");
-  if (fetchInit.body && !headers.has("Content-Type")) {
+  if (
+    fetchInit.body &&
+    !(typeof FormData !== "undefined" && fetchInit.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json");
   }
   if (organizationId && !headers.has("X-Organization-ID")) {

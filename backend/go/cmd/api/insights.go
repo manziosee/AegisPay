@@ -229,6 +229,9 @@ func (a *App) cashForecast(w http.ResponseWriter, r *http.Request) {
 		UNION ALL
 		SELECT 'payout',id,reference,amount_minor,COALESCE(submitted_at,created_at)+interval '2 days' FROM bank_payout_instructions
 			WHERE organization_id=$1 AND currency=$2 AND status IN ('prepared','exported_for_manual_entry','submitted_to_bank')
+		UNION ALL
+		SELECT 'commitment',id,title,amount_minor,COALESCE(due_date::timestamptz,created_at+interval '7 days') FROM finance_commitments
+			WHERE organization_id=$1 AND currency=$2 AND status='planned'
 		ORDER BY 5 LIMIT 2000`, org, currency)
 	if err != nil {
 		writeJSON(w, 500, problem{Error: "forecast unavailable", RequestID: requestID(r)})
@@ -250,7 +253,7 @@ func (a *App) cashForecast(w http.ResponseWriter, r *http.Request) {
 	var expectedIn, expectedOut int64
 	for _, item := range expected {
 		key := item.Expected.Format("2006-01-02")
-		if item.Kind == "payout" {
+		if item.Kind == "payout" || item.Kind == "commitment" {
 			knownOut[key] += item.Amount
 			expectedOut += item.Amount
 		} else {

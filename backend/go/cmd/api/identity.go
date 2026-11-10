@@ -239,6 +239,16 @@ func roleAllows(p principal, r *http.Request) bool {
 		}
 	case "reconciliation":
 		scope = "reconciliation.manage"
+	case "finance-plans":
+		if r.Method == http.MethodGet {
+			scope = "finance_plans.read"
+		} else if len(parts) >= 4 && parts[len(parts)-1] == "review" {
+			scope = "finance_plans.review"
+		} else if len(parts) >= 2 && parts[1] == "evidence" && r.Method == http.MethodPost {
+			scope = "finance_plans.evidence"
+		} else {
+			scope = "finance_plans.manage"
+		}
 	case "onboarding", "feedback":
 		// Handlers check the session and, for changes, the role.
 		return p.sessionID != ""
@@ -292,7 +302,7 @@ func roleAllows(p principal, r *http.Request) bool {
 	case "owner", "admin":
 		return true
 	case "finance_operator":
-		return scope == "transaction_policies.read" || strings.HasSuffix(scope, ".read") || scope == "bank_workflows.manage" || scope == "collections.create" || scope == "collections.cancel" || scope == "collections.confirm" || scope == "transfers.create" || scope == "transfers.approve" || scope == "accounts.read" || scope == "accounts.create" || scope == "customers.read" || scope == "customers.create" || scope == "reports.read" || scope == "reconciliation.manage"
+		return scope == "transaction_policies.read" || strings.HasSuffix(scope, ".read") || scope == "bank_workflows.manage" || scope == "collections.create" || scope == "collections.cancel" || scope == "collections.confirm" || scope == "transfers.create" || scope == "transfers.approve" || scope == "accounts.read" || scope == "accounts.create" || scope == "customers.read" || scope == "customers.create" || scope == "reports.read" || scope == "reconciliation.manage" || scope == "finance_plans.read" || scope == "finance_plans.manage" || scope == "finance_plans.evidence"
 	case "fraud_analyst":
 		return scope == "fraud.read" || scope == "fraud.analyze" || scope == "fraud.investigate" || scope == "risk_rules.read" || scope == "risk_rules.manage" || scope == "collections.read" || scope == "transfers.read" || scope == "ledger.read" || scope == "reports.read"
 	case "developer":
@@ -559,7 +569,7 @@ func apiKeyPrefix(environment string) string {
 
 func validScope(s string) bool {
 	switch s {
-	case "organization.read", "members.read", "members.manage", "api_keys.read", "api_keys.create", "api_keys.revoke", "customers.read", "customers.create", "accounts.read", "accounts.create", "accounts.sandbox_credit", "collections.read", "collections.create", "collections.cancel", "collections.confirm", "collections.refund", "transfers.read", "transfers.create", "ledger.read", "fraud.read", "fraud.analyze", "fraud.investigate", "reconciliation.manage", "webhooks.read", "webhooks.manage", "reports.read", "audit.read", "transaction_policies.read", "transaction_policies.manage", "risk_rules.read", "risk_rules.manage", "*":
+	case "organization.read", "members.read", "members.manage", "api_keys.read", "api_keys.create", "api_keys.revoke", "customers.read", "customers.create", "accounts.read", "accounts.create", "accounts.sandbox_credit", "collections.read", "collections.create", "collections.cancel", "collections.confirm", "collections.refund", "transfers.read", "transfers.create", "ledger.read", "fraud.read", "fraud.analyze", "fraud.investigate", "reconciliation.manage", "webhooks.read", "webhooks.manage", "reports.read", "audit.read", "transaction_policies.read", "transaction_policies.manage", "risk_rules.read", "risk_rules.manage", "finance_plans.read", "finance_plans.manage", "finance_plans.review", "finance_plans.evidence", "*":
 		return true
 	}
 	return false

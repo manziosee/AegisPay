@@ -252,6 +252,21 @@ func (a *App) auditPack(w http.ResponseWriter, r *http.Request) {
 				COALESCE(l.matched_collection_id,l.matched_request_id,l.matched_payout_id,''),l.suggestion_reason
 			FROM reconciliation_lines l JOIN reconciliation_imports i ON i.id=l.import_id AND i.organization_id=l.organization_id
 			WHERE l.organization_id=$1 AND i.created_at>=$2 AND i.created_at<$3 ORDER BY i.created_at,l.id LIMIT ` + limit},
+		{"funds.csv", []string{"fund_id", "name", "fund_type", "donor_name", "project_code", "restriction_note", "currency", "allocated_minor", "status", "created_at"},
+			`SELECT id,name,fund_type,donor_name,project_code,restriction_note,currency,allocated_minor::text,status,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			FROM finance_funds WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT ` + limit},
+		{"commitments.csv", []string{"commitment_id", "fund_id", "type", "title", "beneficiary", "amount_minor", "currency", "status", "payout_id", "due_date", "created_at"},
+			`SELECT id,fund_id,commitment_type,title,beneficiary_name,amount_minor::text,currency,status,COALESCE(payout_id,''),COALESCE(to_char(due_date,'YYYY-MM-DD'),''),to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			FROM finance_commitments WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT ` + limit},
+		{"staff-advances.csv", []string{"advance_id", "commitment_id", "payout_id", "staff_name", "purpose", "amount_minor", "currency", "status", "created_at"},
+			`SELECT id,commitment_id,payout_id,staff_name,purpose,amount_minor::text,currency,status,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			FROM staff_advances WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT ` + limit},
+		{"advance-settlements.csv", []string{"settlement_id", "advance_id", "used_minor", "returned_minor", "note", "status", "submitted_by", "reviewed_by", "reviewed_at", "created_at"},
+			`SELECT id,advance_id,used_minor::text,returned_minor::text,note,status,submitted_by,COALESCE(reviewed_by,''),COALESCE(to_char(reviewed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),''),to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			FROM advance_settlements WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT ` + limit},
+		{"finance-evidence.csv", []string{"evidence_id", "resource_type", "resource_id", "file_name", "content_type", "file_size", "sha256", "note", "uploaded_by", "created_at"},
+			`SELECT id,resource_type,resource_id,file_name,content_type,file_size::text,sha256,note,COALESCE(uploaded_by,''),to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			FROM finance_evidence WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT ` + limit},
 		{"risk-decisions.csv", []string{"assessment_id", "reference", "subject_type", "subject_id", "score", "level", "decision", "matched_rules", "model", "assessed_at", "case_status", "case_resolved_at"},
 			`SELECT r.id,r.transaction_reference,COALESCE(r.subject_type,''),COALESCE(r.subject_id,''),r.risk_score::text,r.risk_level,r.decision,r.matched_rules::text,r.model_version,
 				to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),COALESCE(c.status,''),COALESCE(to_char(c.resolved_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
@@ -273,6 +288,44 @@ func (a *App) auditPack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	evidenceRows, err := a.db.QueryContext(ctx, `SELECT id,resource_type,resource_id,file_name,content FROM finance_evidence
+		WHERE organization_id=$1 AND created_at>=$2 AND created_at<$3 ORDER BY created_at LIMIT 1000`, org, start, end)
+	if err != nil {
+		fail(err)
+		return
+	}
+	var evidenceBytes int64
+	for evidenceRows.Next() {
+		var id, resourceType, resourceID, fileName string
+		var content []byte
+		if err = evidenceRows.Scan(&id, &resourceType, &resourceID, &fileName, &content); err != nil {
+			_ = evidenceRows.Close()
+			fail(err)
+			return
+		}
+		evidenceBytes += int64(len(content))
+		if evidenceBytes > 25<<20 {
+			_ = evidenceRows.Close()
+			fail(errors.New("finance evidence for the audit pack exceeds 25 MiB"))
+			return
+		}
+		fileName = strings.ReplaceAll(fileName, "\\", "/")
+		fileName = strings.TrimPrefix(fileName, "/")
+		if fileName == "" || fileName == "." || strings.Contains(fileName, "../") {
+			fileName = "evidence.bin"
+		}
+		if err = pack.add("evidence/"+resourceType+"/"+resourceID+"/"+id+"-"+fileName, content); err != nil {
+			_ = evidenceRows.Close()
+			fail(err)
+			return
+		}
+	}
+	if err = evidenceRows.Err(); err != nil {
+		_ = evidenceRows.Close()
+		fail(err)
+		return
+	}
+	_ = evidenceRows.Close()
 	anchorRows, err := a.db.QueryContext(ctx, `SELECT anchor_date,statement,proof FROM audit_anchors WHERE organization_id=$1 AND anchor_date>=$2 AND anchor_date<$3 ORDER BY anchor_date`, org, start, end)
 	if err != nil {
 		fail(err)
@@ -306,6 +359,11 @@ func (a *App) auditPack(w http.ResponseWriter, r *http.Request) {
 		"  ledger.csv          every ledger line posted in the month\n" +
 		"  approvals.csv       transfer and payout approval decisions\n" +
 		"  reconciliation.csv  bank and payment-provider statement lines and how each was matched\n" +
+		"  funds.csv           restricted and general fund allocations\n" +
+		"  commitments.csv     planned and bank-linked budget commitments\n" +
+		"  staff-advances.csv  advances linked to payout and statement status\n" +
+		"  advance-settlements.csv reviewed receipts, use, and returns\n" +
+		"  finance-evidence.csv evidence metadata; evidence/ contains uploaded files\n" +
 		"  risk-decisions.csv  risk assessments and the outcome of any case they opened\n" +
 		"  audit-log.csv       the month's audit entries, each with its hash and the previous entry's hash\n" +
 		"  anchors/            daily public timestamps of the audit chain (OpenTimestamps)\n" +

@@ -52,6 +52,7 @@ func (a *App) exportAccount(w http.ResponseWriter, r *http.Request) {
 var workspaceExportTables = []string{
 	"customers", "accounts", "collections", "transfers", "refunds", "journal_entries", "journal_lines",
 	"bank_payment_requests", "bank_payout_instructions", "reconciliation_imports", "reconciliation_lines",
+	"finance_funds", "finance_commitments", "staff_advances", "advance_settlements",
 	"close_periods", "transaction_policies", "risk_rules", "risk_assessments", "fraud_cases", "fraud_case_notes", "audit_logs",
 }
 

@@ -810,18 +810,173 @@ paths:
     get:
       summary: Cash runway and projected balance
       description: |-
-        The known projection adds open payment requests, pending collections and unconfirmed payouts
-        and subtracts average daily spending; the typical projection continues the last 90 days' averages.
+        The known projection adds open payment requests, pending collections, planned finance commitments
+        and unconfirmed payouts, and subtracts average daily spending; the typical projection continues the last 90 days' averages.
         runway_days is when the known projection falls below zero, or null if it stays above zero.
       parameters:
         - {name: days, in: query, schema: {type: integer, minimum: 14, maximum: 365, default: 90}}
         - {name: currency, in: query, schema: {type: string}}
       responses: {'200': {description: 'History, projections, runway and expected items'}}
+  /v1/finance-plans/funds:
+    get:
+      summary: List organization funds and budget balances
+      description: Returns allocation, active commitments, recorded spend, and available balance per fund and currency.
+      responses: {'200': {description: Funds and derived budget totals}}
+    post:
+      summary: Create a general, restricted, grant, project, or household fund
+      description: Restricted and grant funds require a restriction note. Allocations are budgets and do not represent bank balances.
+      parameters: [{name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, fund_type, currency, allocated_minor]
+              properties:
+                name: {type: string, minLength: 2, maxLength: 120}
+                fund_type: {type: string, enum: [general, restricted, grant, project, household]}
+                donor_name: {type: string, maxLength: 160}
+                project_code: {type: string, maxLength: 80}
+                restriction_note: {type: string, maxLength: 1000}
+                currency: {type: string, minLength: 3, maxLength: 3}
+                allocated_minor: {type: integer, minimum: 0}
+                period_start: {type: string, format: date}
+                period_end: {type: string, format: date}
+      responses: {'201': {description: Fund created}, '400': {$ref: '#/components/responses/BadRequest'}}
+  /v1/finance-plans/funds/{id}/close:
+    post:
+      summary: Close a fund with no active commitments
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 3, maxLength: 500}}}}}
+      responses: {'200': {description: Fund closed}, '403': {description: Owner or admin required}, '409': {description: Active commitments remain}}
+  /v1/finance-plans/commitments:
+    get:
+      summary: List planned and bank-linked budget commitments
+      responses: {'200': {description: Commitments and bank-payout links}}
+    post:
+      summary: Reserve budget for a supplier or operating commitment
+      description: The fund is locked while available budget is checked; an over-budget commitment is rejected.
+      parameters: [{name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fund_id, commitment_type, title, amount_minor, currency]
+              properties:
+                fund_id: {type: string}
+                commitment_type: {type: string, enum: [supplier, operating]}
+                title: {type: string, minLength: 2, maxLength: 160}
+                beneficiary_name: {type: string, maxLength: 160}
+                amount_minor: {type: integer, minimum: 1}
+                currency: {type: string, minLength: 3, maxLength: 3}
+                due_date: {type: string, format: date}
+      responses: {'201': {description: Commitment created}, '409': {description: Fund is closed or commitment exceeds available balance}}
+  /v1/finance-plans/commitments/{id}/link-payout:
+    post:
+      summary: Create a payout request linked to a planned commitment
+      description: Uses the existing payout approval and risk rules. This does not submit or settle money.
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [note], properties: {note: {type: string, minLength: 3, maxLength: 500}}}}}
+      responses: {'201': {description: Linked payout awaiting approval or bank-file steps}, '409': {description: Commitment is not eligible}}
+  /v1/finance-plans/advances:
+    get:
+      summary: List staff advances with payout and settlement status
+      responses: {'200': {description: Advance register}}
+    post:
+      summary: Create a staff advance and linked payout instruction
+      description: Payout uses the normal approval and risk workflow. Advance settlement is unavailable until a bank statement confirms the payout.
+      parameters: [{name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fund_id, staff_name, purpose, amount_minor, currency]
+              properties:
+                fund_id: {type: string}
+                staff_name: {type: string, minLength: 2, maxLength: 160}
+                purpose: {type: string, minLength: 3, maxLength: 500}
+                amount_minor: {type: integer, minimum: 1}
+                currency: {type: string, minLength: 3, maxLength: 3}
+                note: {type: string, maxLength: 500}
+      responses: {'201': {description: Advance and linked payout created}, '409': {description: Fund balance is insufficient or inactive}}
+  /v1/finance-plans/advances/{id}/settlements:
+    get:
+      summary: List settlement submissions for an advance
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Settlement history}}
+    post:
+      summary: Submit expense use and returned funds for independent review
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: Idempotency-Key, in: header, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [used_minor, returned_minor, note]
+              properties:
+                used_minor: {type: integer, minimum: 0}
+                returned_minor: {type: integer, minimum: 0}
+                note: {type: string, minLength: 3, maxLength: 1000}
+      responses: {'201': {description: Settlement submitted for review}, '409': {description: Advance is not statement-confirmed or settlement exceeds balance}}
+  /v1/finance-plans/advances/{id}/settlements/{settlementId}/review:
+    post:
+      summary: Approve or reject a settlement as a different owner/admin
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+        - {name: settlementId, in: path, required: true, schema: {type: string}}
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [decision, note], properties: {decision: {type: string, enum: [approve, reject]}, note: {type: string, minLength: 3, maxLength: 1000}}}}}
+      responses: {'200': {description: Settlement decision recorded}, '403': {description: Independent owner/admin reviewer required}}
+  /v1/finance-plans/evidence:
+    get:
+      summary: List evidence metadata for a finance record
+      parameters:
+        - {name: resource_type, in: query, required: true, schema: {type: string, enum: [commitment, advance, settlement]}}
+        - {name: resource_id, in: query, required: true, schema: {type: string}}
+      responses: {'200': {description: Evidence metadata including SHA-256}}
+    post:
+      summary: Upload supporting evidence
+      description: Accepts PDF, PNG, JPEG, text, CSV, or ZIP files up to 4 MiB. Duplicate content for one record is de-duplicated by SHA-256.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [resource_type, resource_id, file]
+              properties:
+                resource_type: {type: string, enum: [commitment, advance, settlement]}
+                resource_id: {type: string}
+                note: {type: string, maxLength: 500}
+                file: {type: string, format: binary}
+      responses: {'201': {description: Evidence stored and hashed}, '400': {description: Invalid or oversized file}}
+  /v1/finance-plans/evidence/{id}:
+    get:
+      summary: Download a tenant-scoped evidence file
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {description: Evidence attachment}, '404': {description: Evidence not found}}
+  /v1/finance-plans/queue:
+    get:
+      summary: List prioritized payout approvals, advance reviews, and reconciliation exceptions
+      responses: {'200': {description: Prioritized finance control work queue}}
   /v1/reports/audit-pack:
     get:
       summary: Download the signed month-end audit pack (ZIP)
       description: |-
-        Ledger, approvals, reconciliation, risk decisions and audit log CSVs for the month, that month's
+        Ledger, approvals, reconciliation, risk decisions, finance funds, commitments, staff advances,
+        settlements, evidence metadata and uploaded evidence for the month, that month's
         public timestamp proofs, the audit-chain check, a manifest with every file's SHA-256, and an
         Ed25519 signature of the manifest. Public keys are at /audit-pack-keys.
       parameters: [{name: month, in: query, schema: {type: string, example: '2026-10'}, description: Defaults to the previous month (UTC)}]
