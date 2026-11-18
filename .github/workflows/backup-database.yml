@@ -67,7 +67,7 @@ jobs:
           test -n "$BACKUP_PASSPHRASE"
           gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" --symmetric --cipher-algo AES256 --output aegispay-backup.dump.gpg backup.dump
           rm backup.dump
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aegispay-backup-${{ github.run_id }}
           path: aegispay-backup.dump.gpg
