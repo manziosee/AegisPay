@@ -125,6 +125,7 @@ func main() {
 	mux.HandleFunc("POST /v1/auth/password/forgot", a.forgotPassword)
 	mux.HandleFunc("POST /v1/auth/password/reset", a.resetPassword)
 	mux.HandleFunc("POST /v1/auth/email/verify", a.verifyEmail)
+	mux.HandleFunc("GET /v1/public/invoices/{token}", a.publicInvoice)
 	mux.Handle("/v1/", a.authenticate(http.HandlerFunc(a.route)))
 	addr := env("HTTP_ADDR", ":8080")
 	server := &http.Server{Addr: addr, Handler: requestIDs(securityHeaders(metrics(cors(a.rateLimit(mux))))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
@@ -353,6 +354,10 @@ func (a *App) route(w http.ResponseWriter, r *http.Request) {
 		a.organizations(w, r, seg)
 	case "customers":
 		a.customers(w, r, seg)
+	case "invoices":
+		a.invoices(w, r, seg)
+	case "recurring-invoices":
+		a.recurringInvoices(w, r, seg)
 	case "accounts":
 		a.accounts(w, r, seg)
 	case "collections":

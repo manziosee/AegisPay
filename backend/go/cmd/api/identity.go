@@ -183,6 +183,12 @@ func roleAllows(p principal, r *http.Request) bool {
 		} else {
 			scope = "bank_workflows.manage"
 		}
+	case "invoices", "recurring-invoices":
+		if r.Method == http.MethodGet {
+			scope = "bank_workflows.read"
+		} else {
+			scope = "bank_workflows.manage"
+		}
 	case "api-keys":
 		if r.Method == http.MethodGet {
 			scope = "api_keys.read"

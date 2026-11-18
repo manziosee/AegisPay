@@ -606,3 +606,86 @@ export type AuditVerification = {
   first_invalid_id?: string;
   detail?: string;
 };
+
+export type InvoiceLine = { description: string; quantity: number; unit_amount: number; amount?: number };
+
+export type InvoiceState = "open" | "overdue" | "paid" | "cancelled";
+
+export type Invoice = {
+  id: string;
+  invoice_number: string | null;
+  reference: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  amount: number;
+  subtotal: number;
+  tax: number;
+  tax_rate_bps: number;
+  currency: string;
+  description: string;
+  line_items: InvoiceLine[];
+  notes: string;
+  due_date: string | null;
+  status: "open" | "statement_confirmed" | "marked_paid" | "cancelled";
+  state: InvoiceState;
+  share_url: string | null;
+  sent_at: string | null;
+  paid_at: string | null;
+  paid_note: string;
+  reminder_count: number;
+  recurring_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type InvoiceSummary = { currency: string; outstanding: number; overdue: number; paid_last_30_days: number };
+
+export type InvoiceSettings = {
+  payment_instructions: string;
+  invoice_footer: string;
+  reminders_enabled: boolean;
+  next_invoice_number: string;
+};
+
+export type RecurringInvoice = {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string | null;
+  currency: string;
+  line_items: InvoiceLine[];
+  tax_rate_bps: number;
+  notes: string;
+  amount: number;
+  frequency: "weekly" | "monthly" | "quarterly" | "yearly";
+  due_days: number;
+  next_run_on: string;
+  end_on: string | null;
+  auto_send: boolean;
+  status: "active" | "paused" | "ended";
+  issued_count: number;
+  last_issued_at: string | null;
+  created_at: string;
+};
+
+export type PublicInvoice = {
+  business: { name: string; country_code: string; practice: boolean };
+  invoice_number: string | null;
+  reference: string;
+  customer_name: string | null;
+  amount: number;
+  subtotal: number;
+  tax: number;
+  tax_rate_bps: number;
+  currency: string;
+  description: string;
+  line_items: InvoiceLine[];
+  notes: string;
+  due_date: string | null;
+  state: InvoiceState;
+  issued_at: string;
+  paid_at: string | null;
+  payment_instructions: string;
+  footer: string;
+};

@@ -61,6 +61,7 @@ func (a *App) maintenancePass(ctx context.Context) {
 	a.reencryptSecrets(ctx, "user_mfa_factors", "user_id", "secret_ciphertext", purposeMFASecret)
 	a.reencryptSecrets(ctx, "notification_channels", "id", "url_ciphertext", purposeChannelURL)
 	a.anchorAuditChains(ctx)
+	a.runInvoiceSchedules(ctx)
 }
 
 // reencryptSecrets re-seals ciphertexts that were not written by the active

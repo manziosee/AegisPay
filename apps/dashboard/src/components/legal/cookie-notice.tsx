@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 const KEY = "aegispay.cookie-notice";
@@ -9,6 +10,7 @@ const KEY = "aegispay.cookie-notice";
 /** A notice rather than a consent prompt: only a strictly necessary cookie is used. */
 export function CookieNotice() {
   const [visible, setVisible] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     try {
@@ -18,9 +20,10 @@ export function CookieNotice() {
     }
   }, []);
 
-  if (!visible) return null;
+  // Customers opening an invoice link are not signed in and get no cookie.
+  if (!visible || pathname?.startsWith("/pay/")) return null;
   return (
-    <div role="region" aria-label="Cookie notice" className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-[560px] flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 text-[12px] text-ink-700 shadow-lift">
+    <div role="region" aria-label="Cookie notice" className="print:hidden fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-[560px] flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 text-[12px] text-ink-700 shadow-lift">
       <p className="min-w-0 flex-1">
         We only use a cookie that keeps you signed in, with no tracking.{" "}
         <Link href="/cookies" className="font-medium text-primary hover:underline">

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -167,5 +168,63 @@ func TestPickCurrencyUsesLargestBalance(t *testing.T) {
 	}
 	if got := pickCurrency("", map[string]int64{}, "EUR"); got != "EUR" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestPriceInvoiceLinesTaxAndLimits(t *testing.T) {
+	lines, subtotal, tax, err := priceInvoice([]invoiceLine{
+		{Description: " Consulting ", Quantity: 2.5, UnitAmount: 10000},
+		{Description: "Travel", Quantity: 1, UnitAmount: 3333},
+	}, 1800)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines[0].Description != "Consulting" || lines[0].Amount != 25000 || subtotal != 28333 || tax != 5100 {
+		t.Fatalf("got %+v subtotal %d tax %d", lines, subtotal, tax)
+	}
+	for _, bad := range [][]invoiceLine{nil, {{Description: "", Quantity: 1, UnitAmount: 1}}, {{Description: "x", Quantity: 0, UnitAmount: 1}}, {{Description: "x", Quantity: 1, UnitAmount: -1}}, {{Description: "free", Quantity: 1, UnitAmount: 0}}} {
+		if _, _, _, err := priceInvoice(bad, 0); err == nil {
+			t.Fatalf("expected an error for %+v", bad)
+		}
+	}
+	if _, _, _, err := priceInvoice([]invoiceLine{{Description: "x", Quantity: 1, UnitAmount: 1}}, 10001); err == nil {
+		t.Fatal("tax above 100% must be refused")
+	}
+}
+
+func TestInvoiceStateAndReminderSchedule(t *testing.T) {
+	today := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	past := sql.NullTime{Time: today.AddDate(0, 0, -1), Valid: true}
+	if invoiceState("open", past, today) != "overdue" || invoiceState("open", sql.NullTime{}, today) != "open" || invoiceState("marked_paid", past, today) != "paid" {
+		t.Fatal("unexpected invoice state")
+	}
+	due := today
+	now := today.Add(25 * time.Hour)
+	if !reminderDue(due, 0, sql.NullTime{}, now) {
+		t.Fatal("first reminder is due a day after the due date")
+	}
+	if reminderDue(due, 1, sql.NullTime{}, now) {
+		t.Fatal("second reminder waits until a week after the due date")
+	}
+	if reminderDue(due, 3, sql.NullTime{}, today.AddDate(0, 1, 0)) {
+		t.Fatal("at most three reminders")
+	}
+	if reminderDue(due, 0, sql.NullTime{Time: now.Add(-time.Hour), Valid: true}, now) {
+		t.Fatal("never two reminders within a day")
+	}
+}
+
+func TestMonthlyScheduleKeepsItsDay(t *testing.T) {
+	jan31 := time.Date(2027, 1, 31, 0, 0, 0, 0, time.UTC)
+	feb := advanceSchedule(jan31, "monthly", 31)
+	mar := advanceSchedule(feb, "monthly", 31)
+	if feb.Format("2006-01-02") != "2027-02-28" || mar.Format("2006-01-02") != "2027-03-31" {
+		t.Fatalf("got %s then %s", feb.Format("2006-01-02"), mar.Format("2006-01-02"))
+	}
+	if got := advanceSchedule(jan31, "weekly", 31).Format("2006-01-02"); got != "2027-02-07" {
+		t.Fatalf("weekly got %s", got)
+	}
+	if got := advanceSchedule(time.Date(2027, 11, 30, 0, 0, 0, 0, time.UTC), "quarterly", 30).Format("2006-01-02"); got != "2028-02-29" {
+		t.Fatalf("quarterly got %s", got)
 	}
 }

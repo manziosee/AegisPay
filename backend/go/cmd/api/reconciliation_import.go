@@ -365,7 +365,7 @@ func (a *App) importStatementLinesFrom(w http.ResponseWriter, r *http.Request, o
 		}
 	}
 	if len(confirmedRequests) > 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE bank_payment_requests SET status='statement_confirmed' WHERE organization_id=$1 AND id=ANY($2) AND status='open'`, org, confirmedRequests); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE bank_payment_requests SET status='statement_confirmed',paid_at=now(),updated_at=now() WHERE organization_id=$1 AND id=ANY($2) AND status='open'`, org, confirmedRequests); err != nil {
 			writeJSON(w, 500, problem{Error: "payment request settlement status could not be updated"})
 			return
 		}

@@ -12,6 +12,7 @@ import {
   WalletCards,
   UserRound,
   Network,
+  ReceiptText,
   Send,
   Settings,
   ShieldAlert,
@@ -82,6 +83,15 @@ export const workspaceNav: NavItem[] = [
     description: "Restricted funds, commitments, staff advances and finance evidence",
     keywords: "grants restricted funds budget commitments advances receipt evidence donor",
     visible: (role) => canFinance(role)
+  },
+  {
+    href: "/app/invoices",
+    label: "Invoices",
+    icon: ReceiptText,
+    group: "Operate",
+    description: "Bill customers, share pay links, recurring invoices and reminders",
+    keywords: "invoice bill receivable recurring subscription rent dues reminder pay link",
+    visible: (role) => canFinance(role) || role === "auditor"
   },
   {
     href: "/app/customers",
